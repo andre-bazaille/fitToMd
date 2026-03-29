@@ -10,3 +10,4 @@
 - Added integration tests that exercise the real FIT fixtures through the extractor, renderer, and CLI.
 - Normalized running cadence from FIT running-cadence fields to full steps per minute and suppressed bogus computed grades during paused transition samples.
 - Added temperature-based weather fields to the session summary with FIT extraction fallbacks from session, lap, and record messages.
+- Added optional historical weather enrichment in CLI `auto` mode so reports can include conditions and wind when Garmin Connect-style weather is not embedded in the FIT file.

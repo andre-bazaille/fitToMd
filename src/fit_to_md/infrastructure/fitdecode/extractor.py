@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable
 
 import fitdecode
 
-from fit_to_md.domain.reporting.entities import FitReport
+from fit_to_md.domain.reporting.entities import FitReport, SessionSummary
+from fit_to_md.domain.reporting.ports import HistoricalWeatherProvider
 from fit_to_md.infrastructure.fitdecode.builders import SessionSummaryBuilder, SplitBuilder, TransitionBuilder
 from fit_to_md.infrastructure.fitdecode.models import ParsedActivityData, ParsedLap, ParsedRecord
 
@@ -20,19 +23,51 @@ class FitdecodeActivityExtractor:
         summary_builder: SessionSummaryBuilder | None = None,
         split_builder: SplitBuilder | None = None,
         transition_builder: TransitionBuilder | None = None,
+        weather_provider: HistoricalWeatherProvider | None = None,
     ) -> None:
         self._reader_factory = reader_factory or fitdecode.FitReader
         self._summary_builder = summary_builder or SessionSummaryBuilder()
         self._split_builder = split_builder or SplitBuilder()
         self._transition_builder = transition_builder or TransitionBuilder()
+        self._weather_provider = weather_provider
 
     def extract(self, source: Path) -> FitReport:
         activity = self._parse_activity(source)
+        summary = self._summary_builder.build(activity)
+        summary = self._enrich_summary_weather(summary, activity)
         return FitReport(
-            summary=self._summary_builder.build(activity),
+            summary=summary,
             splits=self._split_builder.build(activity),
             transitions=self._transition_builder.build(activity),
         )
+
+    def _enrich_summary_weather(self, summary: SessionSummary, activity: ParsedActivityData) -> SessionSummary:
+        if self._weather_provider is None or summary.weather is not None:
+            return summary
+
+        start_time = summary.start_time
+        if start_time is None:
+            return summary
+
+        latitude_deg = _semicircles_to_degrees(activity.session_data.get("start_position_lat"))
+        longitude_deg = _semicircles_to_degrees(activity.session_data.get("start_position_long"))
+        if latitude_deg is None or longitude_deg is None:
+            return summary
+
+        end_time = _coerce_datetime(activity.session_data.get("timestamp"))
+        if end_time is None and summary.total_elapsed_time_s is not None:
+            end_time = start_time + timedelta(seconds=summary.total_elapsed_time_s)
+
+        weather = self._weather_provider.lookup(
+            start_time=start_time,
+            end_time=end_time,
+            latitude_deg=latitude_deg,
+            longitude_deg=longitude_deg,
+        )
+        if weather is None:
+            return summary
+
+        return replace(summary, weather=weather)
 
     def _parse_activity(self, source: Path) -> ParsedActivityData:
         session_data: dict[str, object] = {}
@@ -278,3 +313,10 @@ def _coerce_int(value: object) -> int | None:
     if isinstance(value, float):
         return round(value)
     return None
+
+
+def _semicircles_to_degrees(value: object) -> float | None:
+    semicircles = _coerce_float(value)
+    if semicircles is None:
+        return None
+    return (semicircles * 180.0) / (2**31)

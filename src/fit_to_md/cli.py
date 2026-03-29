@@ -9,6 +9,7 @@ from fit_to_md.application.use_cases.generate_markdown_report import GenerateMar
 from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
 from fit_to_md.infrastructure.fitdecode.builders import TransitionBuilder
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
+from fit_to_md.infrastructure.weather import OpenMeteoHistoricalWeatherProvider
 
 
 def _positive_int(value: str) -> int:
@@ -42,18 +43,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=60,
         help="Seconds captured before and after each lap transition.",
     )
+    parser.add_argument(
+        "--weather-mode",
+        choices=("auto", "fit"),
+        default="auto",
+        help="Use FIT-native weather only or enrich missing weather with historical lookup.",
+    )
     return parser
 
 
 def build_default_generator(
     transition_sample_interval: int = 10,
     transition_window: int = 60,
+    weather_mode: str = "auto",
 ) -> GenerateMarkdownReport:
+    weather_provider = OpenMeteoHistoricalWeatherProvider() if weather_mode == "auto" else None
     extractor = FitdecodeActivityExtractor(
         transition_builder=TransitionBuilder(
             sample_interval_s=transition_sample_interval,
             window_s=transition_window,
-        )
+        ),
+        weather_provider=weather_provider,
     )
     renderer = MarkdownReportRenderer()
     return GenerateMarkdownReport(extractor=extractor, renderer=renderer)
@@ -79,6 +89,7 @@ def run(
     generator = report_generator or build_default_generator(
         transition_sample_interval=args.transition_sample_interval,
         transition_window=args.transition_window,
+        weather_mode=args.weather_mode,
     )
 
     try:

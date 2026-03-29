@@ -84,7 +84,7 @@ def test_renderer_generates_markdown_for_real_fit_files(file_name: str) -> None:
     assert "## Session Summary" in markdown
     assert "## Kilometric Splits" in markdown
     assert "## Heart Rate Dynamics (Recovery & Ramp)" in markdown
-    assert "- **Weather:** Temperature data unavailable" in markdown
+    assert "- **Weather:** FIT and historical weather data unavailable" in markdown
     assert "| Km | Time | Pace | Elev +/- | Avg HR | Max HR | Avg Cad |" in markdown
     assert "- **Transition: End of Lap 1 to Start of Lap 2**" in markdown
 
@@ -101,6 +101,8 @@ def test_cli_uses_real_fit_file_and_respects_transition_options() -> None:
             "5",
             "--transition-window",
             "90",
+            "--weather-mode",
+            "fit",
         ],
         stdout=stdout,
         stderr=stderr,

@@ -22,6 +22,19 @@ class SessionSummary:
     avg_temperature_c: Optional[float]
     min_temperature_c: Optional[float]
     max_temperature_c: Optional[float]
+    weather: WeatherSummary | None = None
+
+
+@dataclass(frozen=True)
+class WeatherSummary:
+    source: str
+    temperature_c: Optional[float]
+    apparent_temperature_c: Optional[float]
+    condition_summary: Optional[str]
+    wind_speed_kmh: Optional[float]
+    wind_direction_label: Optional[str]
+    temperature_min_c: Optional[float] = None
+    temperature_max_c: Optional[float] = None
 
 
 @dataclass(frozen=True)

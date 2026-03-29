@@ -36,7 +36,7 @@ class SessionSummarySectionRenderer:
             ),
             f"- **Avg Cadence:** {_format_integer(summary.avg_cadence_spm)} spm",
             f"- **Avg Speed:** {_format_speed(summary.avg_speed_kmh)}",
-            f"- **Weather:** {_format_weather(summary.avg_temperature_c, summary.min_temperature_c, summary.max_temperature_c)}",
+            f"- **Weather:** {_format_weather(summary)}",
         ]
 
 
@@ -109,13 +109,26 @@ def _format_speed(value: float | None) -> str:
     return f"{value:.2f} km/h"
 
 
-def _format_weather(avg_temperature_c: float | None, min_temperature_c: float | None, max_temperature_c: float | None) -> str:
-    if avg_temperature_c is None and min_temperature_c is None and max_temperature_c is None:
-        return "Temperature data unavailable"
+def _format_weather(summary) -> str:
+    if summary.weather is not None:
+        parts = [
+            _format_temperature(summary.weather.temperature_c),
+        ]
+        if summary.weather.apparent_temperature_c is not None:
+            parts.append(f"feels like {_format_temperature(summary.weather.apparent_temperature_c)}")
+        if summary.weather.condition_summary:
+            parts.append(summary.weather.condition_summary)
+        wind_label = _format_wind(summary.weather.wind_speed_kmh, summary.weather.wind_direction_label)
+        if wind_label is not None:
+            parts.append(wind_label)
+        return ", ".join(parts) + f" [{summary.weather.source}]"
+
+    if summary.avg_temperature_c is None and summary.min_temperature_c is None and summary.max_temperature_c is None:
+        return "FIT and historical weather data unavailable"
     return (
-        f"Avg {_format_temperature(avg_temperature_c)} / "
-        f"Min {_format_temperature(min_temperature_c)} / "
-        f"Max {_format_temperature(max_temperature_c)}"
+        f"Avg {_format_temperature(summary.avg_temperature_c)} / "
+        f"Min {_format_temperature(summary.min_temperature_c)} / "
+        f"Max {_format_temperature(summary.max_temperature_c)} [fit]"
     )
 
 
@@ -123,6 +136,16 @@ def _format_temperature(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{value:.1f}C"
+
+
+def _format_wind(speed_kmh: float | None, direction_label: str | None) -> str | None:
+    if speed_kmh is None and direction_label is None:
+        return None
+    if speed_kmh is None:
+        return f"Wind {direction_label}"
+    if direction_label is None:
+        return f"Wind {speed_kmh:.1f} km/h"
+    return f"Wind {speed_kmh:.1f} km/h {direction_label}"
 
 
 def _format_grade(value: float | None) -> str:

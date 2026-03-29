@@ -8,6 +8,7 @@ import pytest
 
 from fit_to_md.infrastructure.fitdecode.builders import TransitionBuilder
 from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
+from fit_to_md.domain.reporting.entities import WeatherSummary
 
 
 class FakeField:
@@ -280,6 +281,73 @@ def test_extractor_derives_weather_summary_from_record_temperatures_when_session
     assert report.summary.avg_temperature_c == pytest.approx(12.0)
     assert report.summary.min_temperature_c == pytest.approx(10.0)
     assert report.summary.max_temperature_c == pytest.approx(14.0)
+
+
+def test_extractor_enriches_missing_weather_from_provider() -> None:
+    start = datetime(2026, 3, 29, 10, 0, 0)
+    frames = [
+        FakeFrame(
+            "session",
+            {
+                "start_time": start,
+                "timestamp": start + timedelta(seconds=1800),
+                "start_position_lat": 583127603,
+                "start_position_long": 27357081,
+                "total_timer_time": 1800.0,
+                "total_distance": 5000.0,
+            },
+        ),
+        FakeFrame(
+            "record",
+            {
+                "timestamp": start,
+                "distance": 0.0,
+                "heart_rate": 120,
+            },
+        ),
+        FakeFrame(
+            "record",
+            {
+                "timestamp": start + timedelta(seconds=1800),
+                "distance": 5000.0,
+                "heart_rate": 150,
+            },
+        ),
+    ]
+
+    class StubWeatherProvider:
+        def __init__(self) -> None:
+            self.calls: list[tuple[datetime, datetime | None, float, float]] = []
+
+        def lookup(
+            self,
+            start_time: datetime,
+            end_time: datetime | None,
+            latitude_deg: float,
+            longitude_deg: float,
+        ) -> WeatherSummary | None:
+            self.calls.append((start_time, end_time, latitude_deg, longitude_deg))
+            return WeatherSummary(
+                source="historical",
+                temperature_c=15.0,
+                apparent_temperature_c=14.0,
+                condition_summary="Sunny",
+                wind_speed_kmh=19.0,
+                wind_direction_label="SW",
+            )
+
+    weather_provider = StubWeatherProvider()
+    extractor = FitdecodeActivityExtractor(
+        reader_factory=lambda _: FakeReader(frames),
+        weather_provider=weather_provider,
+    )
+
+    report = extractor.extract(Path("activity.fit"))
+
+    assert weather_provider.calls
+    assert report.summary.weather is not None
+    assert report.summary.weather.condition_summary == "Sunny"
+    assert report.summary.weather.wind_direction_label == "SW"
 
 
 def test_extractor_omits_grade_when_stopped_distance_change_is_noise() -> None:

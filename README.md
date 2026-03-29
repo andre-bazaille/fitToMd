@@ -29,4 +29,4 @@ Use `--transition-sample-interval` to control how often recovery/ramp samples ar
 
 The report renderer is section-based, so adding new output blocks should be done by adding a section renderer instead of editing a single monolithic formatter.
 
-The session summary includes temperature-based weather information when the FIT file provides it.
+The session summary uses FIT-native weather fields when available and, by default, falls back to historical weather lookup based on the activity start location and time. Use `--weather-mode fit` to disable the external fallback.
