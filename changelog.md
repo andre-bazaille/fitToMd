@@ -1,5 +1,6 @@
 ## 2026-03-29
 
+- Changed running speed presentation in Markdown reports from km/h to pace per kilometer, including average summary pace and transition samples.
 - Added CLI flags to tune elevation smoothing distance and minimum elevation change so session gain/loss can be calibrated per device or file set.
 - Replaced raw FIT session ascent/descent totals with a filtered record-derived elevation calculation to reduce barometric noise in session summaries.
 - Added unit and integration coverage for noise-resistant elevation gain/loss handling.

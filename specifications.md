@@ -62,10 +62,10 @@ The output should follow this exact structure to ensure LLM readability:
 
 \#\# Heart Rate Dynamics (Recovery & Ramp)  
 \- \*\*Transition: Stop of Lap 4 to Start of Lap 5\*\*  
-  \- T+0s: 175 bpm (Speed: 15km/h)  
-  \- T+10s: 165 bpm (Speed: 0km/h)  
-  \- T+30s: 150 bpm (Speed: 0km/h)  
-  \- T+60s: 135 bpm (Speed: 0km/h)
+  \- T+0s: 175 bpm (Pace: 4:00/km)  
+  \- T+10s: 165 bpm (Pace: -)  
+  \- T+30s: 150 bpm (Pace: -)  
+  \- T+60s: 135 bpm (Pace: -)
 
 ## **5\. Technical Challenges & Solutions**
 

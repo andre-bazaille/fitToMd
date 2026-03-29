@@ -92,8 +92,10 @@ def test_renderer_generates_markdown_for_real_fit_files(file_name: str) -> None:
     assert "## Session Summary" in markdown
     assert "## Kilometric Splits" in markdown
     assert "## Heart Rate Dynamics (Recovery & Ramp)" in markdown
+    assert "- **Avg Pace:**" in markdown
     assert "- **Weather:** FIT and historical weather data unavailable" in markdown
     assert "| Km | Time | Pace | Elev +/- | Avg HR | Max HR | Avg Cad |" in markdown
+    assert "(Pace:" in markdown
     assert "- **Transition: End of Lap 1 to Start of Lap 2**" in markdown
 
 

@@ -18,6 +18,7 @@ class SessionSummarySectionRenderer:
 
     def render_lines(self, report: FitReport) -> Sequence[str]:
         summary = report.summary
+        speed_label = "Avg Pace" if _uses_pace(summary.activity_type) else "Avg Speed"
         return [
             f"- **Start Time:** {_format_datetime(summary.start_time)}",
             f"- **Activity Type:** {summary.activity_type or '-'}",
@@ -35,7 +36,7 @@ class SessionSummarySectionRenderer:
                 f"{_format_integer(summary.max_heart_rate_bpm)} bpm"
             ),
             f"- **Avg Cadence:** {_format_integer(summary.avg_cadence_spm)} spm",
-            f"- **Avg Speed:** {_format_speed(summary.avg_speed_kmh)}",
+            f"- **{speed_label}:** {_format_speed_metric(summary.avg_speed_kmh, summary.activity_type)}",
             f"- **Weather:** {_format_weather(summary)}",
         ]
 
@@ -75,19 +76,21 @@ class TransitionSectionRenderer:
 
         lines: list[str] = []
         for transition in report.transitions:
-            lines.extend(self._render_transition(transition))
+            lines.extend(self._render_transition(transition, report.summary.activity_type))
         return lines
 
-    def _render_transition(self, transition: TransitionDynamics) -> list[str]:
+    def _render_transition(self, transition: TransitionDynamics, report_activity_type: str | None) -> list[str]:
         lines = [f"- **Transition: {transition.label}**"]
         for sample in transition.samples:
-            lines.append(self._render_transition_sample(sample))
+            lines.append(self._render_transition_sample(sample, report_activity_type))
         return lines
 
-    def _render_transition_sample(self, sample: TransitionSample) -> str:
+    def _render_transition_sample(self, sample: TransitionSample, report_activity_type: str | None) -> str:
+        speed_label = "Pace" if _uses_pace(report_activity_type) else "Speed"
         return (
             f"  - {_format_offset(sample.offset_seconds)}: {_format_integer(sample.heart_rate_bpm)} bpm "
-            f"(Speed: {_format_speed(sample.speed_kmh)}, Grade: {_format_grade(sample.grade_percent)})"
+            f"({speed_label}: {_format_speed_metric(sample.speed_kmh, report_activity_type)}, "
+            f"Grade: {_format_grade(sample.grade_percent)})"
         )
 
 
@@ -103,10 +106,30 @@ def _format_distance(value: float | None) -> str:
     return f"{value:.2f} km"
 
 
+def _format_speed_metric(value: float | None, activity_type: str | None) -> str:
+    if _uses_pace(activity_type):
+        return _format_pace(value)
+    return _format_speed(value)
+
+
 def _format_speed(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{value:.2f} km/h"
+
+
+def _format_pace(speed_kmh: float | None) -> str:
+    if speed_kmh is None or speed_kmh <= 0:
+        return "-"
+    seconds_per_km = 3600 / speed_kmh
+    return f"{_format_duration(seconds_per_km)}/km"
+
+
+def _uses_pace(activity_type: str | None) -> bool:
+    if activity_type is None:
+        return False
+    normalized_activity_type = activity_type.strip().casefold()
+    return "run" in normalized_activity_type
 
 
 def _format_weather(summary) -> str:

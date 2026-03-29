@@ -57,10 +57,11 @@ def test_render_formats_expected_markdown_sections() -> None:
     assert "- **Start Time:** 2026-03-29 06:30:00" in markdown
     assert "- **Activity Type:** running" in markdown
     assert "- **Total Distance:** 10.50 km" in markdown
+    assert "- **Avg Pace:** 5:15/km" in markdown
     assert "- **Weather:** Avg 18.4C / Min 15.0C / Max 22.5C [fit]" in markdown
     assert "| 1 | 5:30 | 5:30 | +5m | 125 | 135 | 168 |" in markdown
     assert "- **Transition: Stop of Lap 4 to Start of Lap 5**" in markdown
-    assert "T+10s: 165 bpm (Speed: 0.00 km/h, Grade: 0.00%)" in markdown
+    assert "T+10s: 165 bpm (Pace: -, Grade: 0.00%)" in markdown
 
 
 class CustomSection:
@@ -131,3 +132,43 @@ def test_render_prefers_enriched_weather_summary() -> None:
     markdown = MarkdownReportRenderer().render(report)
 
     assert "- **Weather:** 15.2C, feels like 14.8C, Sunny, Wind 19.0 km/h SW [historical]" in markdown
+
+
+def test_render_keeps_speed_units_for_non_running_activities() -> None:
+    report = FitReport(
+        summary=SessionSummary(
+            start_time=datetime(2026, 3, 29, 6, 30, 0),
+            activity_name="Ride",
+            activity_type="cycling",
+            total_distance_km=20.0,
+            total_timer_time_s=2400.0,
+            total_elapsed_time_s=2400.0,
+            total_ascent_m=200.0,
+            total_descent_m=200.0,
+            avg_heart_rate_bpm=140,
+            max_heart_rate_bpm=170,
+            avg_cadence_spm=90,
+            avg_speed_kmh=30.0,
+            avg_temperature_c=None,
+            min_temperature_c=None,
+            max_temperature_c=None,
+        ),
+        transitions=(
+            TransitionDynamics(
+                label="End of Lap 1 to Start of Lap 2",
+                samples=(
+                    TransitionSample(
+                        offset_seconds=0,
+                        heart_rate_bpm=155,
+                        speed_kmh=30.0,
+                        grade_percent=1.2,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    markdown = MarkdownReportRenderer().render(report)
+
+    assert "- **Avg Speed:** 30.00 km/h" in markdown
+    assert "T+0s: 155 bpm (Speed: 30.00 km/h, Grade: 1.20%)" in markdown
