@@ -77,8 +77,9 @@ def test_extractor_decodes_real_fit_files(file_name: str, expected: dict[str, fl
     assert report.summary.max_temperature_c is None
     assert len(report.splits) == expected["splits"]
     assert len(report.transitions) == expected["transitions"]
-    assert report.transitions[0].samples[0].offset_seconds == -60
-    assert report.transitions[0].samples[-1].offset_seconds == 60
+    assert report.transitions[0].label == "Km 1"
+    assert report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
+    assert report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(report.splits[0].time_seconds, abs=0.1)
 
 
 @pytest.mark.parametrize("file_name", sorted(FIT_EXPECTATIONS))
@@ -91,12 +92,13 @@ def test_renderer_generates_markdown_for_real_fit_files(file_name: str) -> None:
     assert markdown.startswith("# FIT Report:")
     assert "## Session Summary" in markdown
     assert "## Kilometric Splits" in markdown
-    assert "## Heart Rate Dynamics (Recovery & Ramp)" in markdown
+    assert "## Heart Rate Dynamics (Per Kilometer)" in markdown
     assert "- **Avg Pace:**" in markdown
     assert "- **Weather:** FIT and historical weather data unavailable" in markdown
     assert "| Km | Time | Pace | Elev +/- | Avg HR | Max HR | Avg Cad |" in markdown
     assert "(Pace:" in markdown
-    assert "- **Transition: End of Lap 1 to Start of Lap 2**" in markdown
+    assert "- **Km 1**" in markdown
+    assert "0:00:" in markdown
 
 
 def test_cli_uses_real_fit_file_and_respects_transition_options() -> None:
@@ -107,10 +109,8 @@ def test_cli_uses_real_fit_file_and_respects_transition_options() -> None:
     exit_code = run(
         argv=[
             str(fit_file),
-            "--transition-sample-interval",
+            "--dynamics-step-size",
             "5",
-            "--transition-window",
-            "90",
             "--weather-mode",
             "fit",
         ],
@@ -123,33 +123,34 @@ def test_cli_uses_real_fit_file_and_respects_transition_options() -> None:
     assert exit_code == 0
     assert stderr.getvalue() == ""
     assert "# FIT Report: 2026-03-24 Running" in output
-    assert "T-90s" in output
-    assert "T+90s" in output
-    assert output.count("T-90s") == FIT_EXPECTATIONS[fit_file.name]["transitions"]
+    assert "0:05:" in output
+    assert output.count("0:00:") == FIT_EXPECTATIONS[fit_file.name]["transitions"]
 
 
 def test_extractor_transition_builder_configuration_affects_real_fit_output() -> None:
     fit_file = FIXTURE_DIR / "2026-03-24-12-20-27.fit"
     default_report = FitdecodeActivityExtractor().extract(fit_file)
     dense_report = FitdecodeActivityExtractor(
-        transition_builder=TransitionBuilder(sample_interval_s=5, window_s=90)
+        transition_builder=TransitionBuilder(sample_interval_s=5)
     ).extract(fit_file)
 
     assert len(default_report.transitions) == len(dense_report.transitions)
-    assert len(default_report.transitions[0].samples) == 13
-    assert len(dense_report.transitions[0].samples) == 37
-    assert dense_report.transitions[0].samples[0].offset_seconds == -90
-    assert dense_report.transitions[0].samples[-1].offset_seconds == 90
+    assert len(dense_report.transitions[0].samples) > len(default_report.transitions[0].samples)
+    assert dense_report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
+    assert dense_report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(
+        dense_report.splits[0].time_seconds,
+        abs=0.1,
+    )
 
 
-def test_extractor_omits_paused_transition_grade_for_real_fit_file() -> None:
+def test_extractor_omits_grade_for_stationary_kilometer_samples_in_real_fit_file() -> None:
     fit_file = FIXTURE_DIR / "2026-03-24-12-20-27.fit"
 
     report = FitdecodeActivityExtractor().extract(fit_file)
 
-    assert report.transitions[-1].samples[-1].offset_seconds == 60
-    assert report.transitions[-1].samples[-1].speed_kmh == pytest.approx(0.0)
-    assert report.transitions[-1].samples[-1].grade_percent is None
+    assert report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
+    assert report.transitions[0].samples[0].speed_kmh == pytest.approx(0.0)
+    assert report.transitions[0].samples[0].grade_percent is None
 
 
 def test_extractor_estimates_smoothed_transition_grade_for_real_fit_file() -> None:
@@ -166,7 +167,8 @@ def test_extractor_estimates_smoothed_transition_grade_for_real_fit_file() -> No
 
     assert transition_grades
     assert max(abs(grade) for grade in transition_grades if grade is not None) < 22.0
-    assert report.transitions[0].samples[6].grade_percent == pytest.approx(-8.81, abs=0.2)
+    assert min(transition_grades) < -15.0
+    assert max(transition_grades) > 15.0
 
 
 def test_renderer_shows_estimated_grade_for_real_fit_file_without_native_grade() -> None:
@@ -174,5 +176,5 @@ def test_renderer_shows_estimated_grade_for_real_fit_file_without_native_grade()
 
     markdown = MarkdownReportRenderer().render(FitdecodeActivityExtractor().extract(fit_file))
 
-    assert "## Heart Rate Dynamics (Recovery & Ramp)" in markdown
+    assert "## Heart Rate Dynamics (Per Kilometer)" in markdown
     assert "Grade:" in markdown

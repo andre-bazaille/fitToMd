@@ -129,10 +129,36 @@ def test_extractor_builds_summary_splits_and_transitions() -> None:
     assert report.splits[1].time_seconds == pytest.approx(300.0, abs=0.01)
     assert report.splits[1].elevation_delta_m == pytest.approx(-5.0, abs=0.2)
     assert len(report.transitions) == 2
-    assert report.transitions[0].label == "End of Lap 1 to Start of Lap 2"
-    assert report.transitions[0].samples[0].offset_seconds == -60
-    assert report.transitions[0].samples[-1].offset_seconds == 60
-    assert report.transitions[0].samples[6].speed_kmh == pytest.approx(12.0, abs=0.1)
+    assert report.transitions[0].label == "Km 1"
+    assert report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
+    assert report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(300.0)
+    assert report.transitions[0].samples[10].speed_kmh == pytest.approx(12.0, abs=0.1)
+
+
+def test_extractor_builds_kilometer_transitions_without_laps() -> None:
+    start = datetime(2026, 3, 29, 6, 0, 0)
+    frames = [
+        FakeFrame(
+            "session",
+            {
+                "start_time": start,
+                "timestamp": start + timedelta(seconds=660),
+                "total_distance": 2100.0,
+                "total_timer_time": 660.0,
+            },
+        ),
+    ]
+    frames.extend(_record_frames(start))
+
+    extractor = FitdecodeActivityExtractor(reader_factory=lambda _: FakeReader(frames))
+
+    report = extractor.extract(Path("activity.fit"))
+
+    assert len(report.transitions) == 2
+    assert report.transitions[0].label == "Km 1"
+    assert report.transitions[1].label == "Km 2"
+    assert report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
+    assert report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(300.0)
 
 
 def test_extractor_falls_back_to_lap_splits_when_record_distances_missing() -> None:
@@ -514,7 +540,7 @@ def test_extractor_omits_grade_when_stopped_distance_change_is_noise() -> None:
 
     extractor = FitdecodeActivityExtractor(
         reader_factory=lambda _: FakeReader(frames),
-        transition_builder=TransitionBuilder(sample_interval_s=60, window_s=60),
+        transition_builder=TransitionBuilder(sample_interval_s=60),
     )
 
     report = extractor.extract(Path("activity.fit"))
@@ -572,11 +598,11 @@ def test_extractor_estimates_grade_from_smoothed_altitude_when_fit_grade_missing
 
     report = FitdecodeActivityExtractor(
         reader_factory=lambda _: FakeReader(frames),
-        transition_builder=TransitionBuilder(sample_interval_s=60, window_s=0),
+        transition_builder=TransitionBuilder(sample_interval_s=120),
     ).extract(Path("activity.fit"))
 
-    assert len(report.transitions[0].samples) == 1
-    assert report.transitions[0].samples[0].grade_percent == pytest.approx(10.0, abs=0.01)
+    assert len(report.transitions[0].samples) == 2
+    assert report.transitions[0].samples[-1].grade_percent == pytest.approx(7.5, abs=0.01)
 
 
 def _record_frames(start: datetime) -> list[FakeFrame]:

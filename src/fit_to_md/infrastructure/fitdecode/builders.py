@@ -205,8 +205,7 @@ class SplitBuilder:
 class TransitionBuilder:
     def __init__(
         self,
-        sample_interval_s: int = 10,
-        window_s: int = 60,
+        sample_interval_s: int = 15,
         elevation_smoothing_distance_m: float = _ELEVATION_SMOOTHING_DISTANCE_M,
         grade_distance_m: float = _TRANSITION_GRADE_DISTANCE_M,
     ) -> None:
@@ -216,27 +215,46 @@ class TransitionBuilder:
             raise ValueError("grade_distance_m must be positive")
 
         self._sample_interval_s = sample_interval_s
-        self._window_s = window_s
         self._elevation_smoothing_distance_m = elevation_smoothing_distance_m
         self._grade_distance_m = grade_distance_m
 
     def build(self, activity: ParsedActivityData) -> tuple[TransitionDynamics, ...]:
-        if len(activity.laps) < 2 or not activity.records:
+        if not activity.records:
+            return tuple()
+
+        distance_records = [record for record in activity.records if record.distance_m is not None]
+        if len(distance_records) < 2:
+            return tuple()
+
+        origin_distance_m = distance_records[0].distance_m or 0.0
+        final_distance_m = distance_records[-1].distance_m or origin_distance_m
+        completed_kilometers = int(max(0.0, final_distance_m - origin_distance_m) // 1000)
+        if completed_kilometers < 1:
             return tuple()
 
         smoothed_altitude_profile = _build_smoothed_altitude_profile(
             activity.records,
             elevation_smoothing_distance_m=self._elevation_smoothing_distance_m,
         )
+        boundaries: list[_BoundaryPoint] = [
+            _BoundaryPoint(timestamp=distance_records[0].timestamp, altitude_m=distance_records[0].altitude_m)
+        ]
         transitions: list[TransitionDynamics] = []
-        for previous_lap, next_lap in zip(activity.laps, activity.laps[1:]):
-            boundary = next_lap.start_time or previous_lap.end_time
-            if boundary is None:
+        for kilometer in range(1, completed_kilometers + 1):
+            target_distance_m = origin_distance_m + (kilometer * 1000)
+            end_boundary = _interpolate_record_at_distance(distance_records, target_distance_m)
+            if end_boundary is None:
+                continue
+
+            start_boundary = boundaries[-1]
+            duration_s = (end_boundary.timestamp - start_boundary.timestamp).total_seconds()
+            if duration_s <= 0:
+                boundaries.append(end_boundary)
                 continue
 
             samples: list[TransitionSample] = []
-            for offset_seconds in range(-self._window_s, self._window_s + 1, self._sample_interval_s):
-                target_time = boundary + timedelta(seconds=offset_seconds)
+            for elapsed_seconds in _build_elapsed_samples(duration_s, self._sample_interval_s):
+                target_time = start_boundary.timestamp + timedelta(seconds=elapsed_seconds)
                 record = _interpolate_record_at_time(activity.records, target_time)
                 if record is None:
                     continue
@@ -251,7 +269,7 @@ class TransitionBuilder:
 
                 samples.append(
                     TransitionSample(
-                        offset_seconds=offset_seconds,
+                        elapsed_seconds=elapsed_seconds,
                         heart_rate_bpm=record.heart_rate_bpm,
                         speed_kmh=_mps_to_kmh(record.speed_mps),
                         grade_percent=grade_percent,
@@ -261,10 +279,11 @@ class TransitionBuilder:
             if samples:
                 transitions.append(
                     TransitionDynamics(
-                        label=f"End of Lap {previous_lap.index} to Start of Lap {next_lap.index}",
+                        label=f"Km {kilometer}",
                         samples=tuple(samples),
                     )
                 )
+            boundaries.append(end_boundary)
 
         return tuple(transitions)
 
@@ -542,6 +561,14 @@ def _interpolate_record_at_time(records: tuple[ParsedRecord, ...], target_time: 
         previous_record = current_record
 
     return None
+
+
+def _build_elapsed_samples(duration_s: float, sample_interval_s: int) -> list[float]:
+    last_full_step = int(duration_s // sample_interval_s)
+    samples = [float(step * sample_interval_s) for step in range(last_full_step + 1)]
+    if not samples or samples[-1] != duration_s:
+        samples.append(duration_s)
+    return samples
 
 
 def _meters_to_km(value: float | None) -> float | None:

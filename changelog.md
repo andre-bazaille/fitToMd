@@ -1,5 +1,6 @@
 ## 2026-03-29
 
+- Switched Heart Rate Dynamics from lap-based transitions to per-kilometer elapsed time series so each completed kilometer reports HR/pace/grade from `0:00` to the split finish, with a configurable CLI step size that defaults to 15 seconds.
 - Replaced noisy record-to-record transition grade synthesis with a smoothed altitude-based grade estimate that reuses the elevation smoothing model and still omits grade when movement is paused or distance context is insufficient.
 - Changed running speed presentation in Markdown reports from km/h to pace per kilometer, including average summary pace and transition samples.
 - Added CLI flags to tune elevation smoothing distance and minimum elevation change so session gain/loss can be calibrated per device or file set.

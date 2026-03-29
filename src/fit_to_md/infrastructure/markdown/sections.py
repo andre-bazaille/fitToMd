@@ -68,7 +68,7 @@ class SplitSectionRenderer:
 
 
 class TransitionSectionRenderer:
-    heading = "Heart Rate Dynamics (Recovery & Ramp)"
+    heading = "Heart Rate Dynamics (Per Kilometer)"
 
     def render_lines(self, report: FitReport) -> Sequence[str]:
         if not report.transitions:
@@ -80,7 +80,7 @@ class TransitionSectionRenderer:
         return lines
 
     def _render_transition(self, transition: TransitionDynamics, report_activity_type: str | None) -> list[str]:
-        lines = [f"- **Transition: {transition.label}**"]
+        lines = [f"- **{transition.label}**"]
         for sample in transition.samples:
             lines.append(self._render_transition_sample(sample, report_activity_type))
         return lines
@@ -91,7 +91,7 @@ class TransitionSectionRenderer:
         if sample.grade_percent is not None:
             metrics.append(f"Grade: {_format_grade(sample.grade_percent)}")
         return (
-            f"  - {_format_offset(sample.offset_seconds)}: {_format_integer(sample.heart_rate_bpm)} bpm "
+            f"  - {_format_duration(sample.elapsed_seconds)}: {_format_integer(sample.heart_rate_bpm)} bpm "
             f"({', '.join(metrics)})"
         )
 
@@ -212,8 +212,3 @@ def _format_duration(value: float | None) -> str:
     return f"{minutes}:{seconds:02d}"
 
 
-def _format_offset(value: int) -> str:
-    if value == 0:
-        return "T+0s"
-    prefix = "+" if value > 0 else "-"
-    return f"T{prefix}{abs(value)}s"

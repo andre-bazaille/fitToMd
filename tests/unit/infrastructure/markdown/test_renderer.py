@@ -36,10 +36,10 @@ def test_render_formats_expected_markdown_sections() -> None:
         ),
         transitions=(
             TransitionDynamics(
-                label="Stop of Lap 4 to Start of Lap 5",
+                label="Km 4",
                 samples=(
                     TransitionSample(
-                        offset_seconds=10,
+                        elapsed_seconds=10.0,
                         heart_rate_bpm=165,
                         speed_kmh=0.0,
                         grade_percent=0.0,
@@ -59,8 +59,9 @@ def test_render_formats_expected_markdown_sections() -> None:
     assert "- **Avg Pace:** 5:15/km" in markdown
     assert "- **Weather:** Avg 18.4C / Min 15.0C / Max 22.5C [fit]" in markdown
     assert "| 1 | 5:30 | 5:30 | +5m | 125 | 135 | 168 |" in markdown
-    assert "- **Transition: Stop of Lap 4 to Start of Lap 5**" in markdown
-    assert "T+10s: 165 bpm (Pace: -, Grade: 0.00%)" in markdown
+    assert "## Heart Rate Dynamics (Per Kilometer)" in markdown
+    assert "- **Km 4**" in markdown
+    assert "0:10: 165 bpm (Pace: -, Grade: 0.00%)" in markdown
 
 
 def test_render_omits_missing_transition_grade() -> None:
@@ -84,10 +85,10 @@ def test_render_omits_missing_transition_grade() -> None:
         ),
         transitions=(
             TransitionDynamics(
-                label="End of Lap 1 to Start of Lap 2",
+                label="Km 1",
                 samples=(
                     TransitionSample(
-                        offset_seconds=0,
+                        elapsed_seconds=0.0,
                         heart_rate_bpm=155,
                         speed_kmh=12.0,
                         grade_percent=None,
@@ -99,7 +100,7 @@ def test_render_omits_missing_transition_grade() -> None:
 
     markdown = MarkdownReportRenderer().render(report)
 
-    assert "T+0s: 155 bpm (Pace: 5:00/km)" in markdown
+    assert "0:00: 155 bpm (Pace: 5:00/km)" in markdown
     assert "Grade:" not in markdown
 
 
@@ -194,10 +195,10 @@ def test_render_keeps_speed_units_for_non_running_activities() -> None:
         ),
         transitions=(
             TransitionDynamics(
-                label="End of Lap 1 to Start of Lap 2",
+                label="Km 1",
                 samples=(
                     TransitionSample(
-                        offset_seconds=0,
+                        elapsed_seconds=0.0,
                         heart_rate_bpm=155,
                         speed_kmh=30.0,
                         grade_percent=1.2,
@@ -210,4 +211,4 @@ def test_render_keeps_speed_units_for_non_running_activities() -> None:
     markdown = MarkdownReportRenderer().render(report)
 
     assert "- **Avg Speed:** 30.00 km/h" in markdown
-    assert "T+0s: 155 bpm (Speed: 30.00 km/h, Grade: 1.20%)" in markdown
+    assert "0:00: 155 bpm (Speed: 30.00 km/h, Grade: 1.20%)" in markdown

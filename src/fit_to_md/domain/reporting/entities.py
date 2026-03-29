@@ -50,7 +50,7 @@ class Split:
 
 @dataclass(frozen=True)
 class TransitionSample:
-    offset_seconds: int
+    elapsed_seconds: float
     heart_rate_bpm: Optional[int]
     speed_kmh: Optional[float]
     grade_percent: Optional[float]

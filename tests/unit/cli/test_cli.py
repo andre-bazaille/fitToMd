@@ -57,19 +57,17 @@ def test_run_passes_transition_options_to_default_generator(tmp_path: Path, monk
     fit_file.write_bytes(b"FIT")
     stdout = io.StringIO()
     stderr = io.StringIO()
-    calls: list[tuple[int, int, str, float, float]] = []
+    calls: list[tuple[int, str, float, float]] = []
 
     def fake_build_default_generator(
-        transition_sample_interval: int = 10,
-        transition_window: int = 60,
+        dynamics_step_size: int = 15,
         weather_mode: str = "auto",
         elevation_smoothing_distance: float = 170.0,
         elevation_min_change: float = 0.4,
     ) -> StubGenerator:
         calls.append(
             (
-                transition_sample_interval,
-                transition_window,
+                dynamics_step_size,
                 weather_mode,
                 elevation_smoothing_distance,
                 elevation_min_change,
@@ -82,10 +80,8 @@ def test_run_passes_transition_options_to_default_generator(tmp_path: Path, monk
     exit_code = run(
         argv=[
             str(fit_file),
-            "--transition-sample-interval",
+            "--dynamics-step-size",
             "5",
-            "--transition-window",
-            "90",
             "--weather-mode",
             "fit",
             "--elevation-smoothing-distance",
@@ -98,13 +94,12 @@ def test_run_passes_transition_options_to_default_generator(tmp_path: Path, monk
     )
 
     assert exit_code == 0
-    assert calls == [(5, 90, "fit", 220.0, 0.8)]
+    assert calls == [(5, "fit", 220.0, 0.8)]
 
 
 def test_build_default_generator_configures_transition_builder() -> None:
     generator = build_default_generator(
-        transition_sample_interval=5,
-        transition_window=90,
+        dynamics_step_size=5,
         weather_mode="auto",
         elevation_smoothing_distance=220.0,
         elevation_min_change=0.8,
@@ -117,7 +112,6 @@ def test_build_default_generator_configures_transition_builder() -> None:
     assert summary_builder._elevation_smoothing_distance_m == 220.0
     assert summary_builder._min_elevation_change_m == 0.8
     assert transition_builder._sample_interval_s == 5
-    assert transition_builder._window_s == 90
     assert isinstance(extractor._weather_provider, OpenMeteoHistoricalWeatherProvider)
 
 

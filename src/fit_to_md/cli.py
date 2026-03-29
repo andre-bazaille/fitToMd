@@ -46,17 +46,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional path for the generated Markdown file.",
     )
     parser.add_argument(
+        "--dynamics-step-size",
         "--transition-sample-interval",
+        dest="dynamics_step_size",
         type=_positive_int,
-        default=10,
-        help="Sampling interval in seconds for transition dynamics output.",
+        default=15,
+        help="Sampling interval in seconds for per-kilometer dynamics output.",
     )
-    parser.add_argument(
-        "--transition-window",
-        type=_positive_int,
-        default=60,
-        help="Seconds captured before and after each lap transition.",
-    )
+    parser.add_argument("--transition-window", type=_positive_int, default=60, help=argparse.SUPPRESS)
     parser.add_argument(
         "--weather-mode",
         choices=("auto", "fit"),
@@ -79,8 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def build_default_generator(
-    transition_sample_interval: int = 10,
-    transition_window: int = 60,
+    dynamics_step_size: int = 15,
     weather_mode: str = "auto",
     elevation_smoothing_distance: float = 170.0,
     elevation_min_change: float = 0.4,
@@ -92,8 +88,7 @@ def build_default_generator(
             min_elevation_change_m=elevation_min_change,
         ),
         transition_builder=TransitionBuilder(
-            sample_interval_s=transition_sample_interval,
-            window_s=transition_window,
+            sample_interval_s=dynamics_step_size,
         ),
         weather_provider=weather_provider,
     )
@@ -119,8 +114,7 @@ def run(
         return 2
 
     generator = report_generator or build_default_generator(
-        transition_sample_interval=args.transition_sample_interval,
-        transition_window=args.transition_window,
+        dynamics_step_size=args.dynamics_step_size,
         weather_mode=args.weather_mode,
         elevation_smoothing_distance=args.elevation_smoothing_distance,
         elevation_min_change=args.elevation_min_change,
