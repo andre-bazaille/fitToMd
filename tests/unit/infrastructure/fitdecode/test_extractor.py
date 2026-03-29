@@ -6,7 +6,7 @@ from pathlib import Path
 import fitdecode
 import pytest
 
-from fit_to_md.infrastructure.fitdecode.builders import TransitionBuilder
+from fit_to_md.infrastructure.fitdecode.builders import SessionSummaryBuilder, TransitionBuilder
 from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
 from fit_to_md.domain.reporting.entities import WeatherSummary
 
@@ -348,6 +348,84 @@ def test_extractor_enriches_missing_weather_from_provider() -> None:
     assert report.summary.weather is not None
     assert report.summary.weather.condition_summary == "Sunny"
     assert report.summary.weather.wind_direction_label == "SW"
+
+
+def test_extractor_derives_noise_resistant_elevation_gain_loss_from_records() -> None:
+    start = datetime(2026, 3, 29, 8, 45, 0)
+    frames = [
+        FakeFrame(
+            "session",
+            {
+                "start_time": start,
+                "total_timer_time": 600.0,
+                "total_distance": 1000.0,
+                "total_ascent": 24.0,
+                "total_descent": 17.0,
+            },
+        ),
+    ]
+
+    for index in range(21):
+        distance_m = index * 50.0
+        altitude_m = 100.0 + (index * 0.5) + (0.25 if index % 2 == 0 else -0.25)
+        frames.append(
+            FakeFrame(
+                "record",
+                {
+                    "timestamp": start + timedelta(seconds=index * 30),
+                    "distance": distance_m,
+                    "enhanced_altitude": altitude_m,
+                },
+            )
+        )
+
+    extractor = FitdecodeActivityExtractor(reader_factory=lambda _: FakeReader(frames))
+
+    report = extractor.extract(Path("activity.fit"))
+
+    assert report.summary.total_ascent_m == pytest.approx(10.0, abs=1.0)
+    assert report.summary.total_descent_m == pytest.approx(0.0, abs=0.5)
+    assert report.summary.total_ascent_m < 24.0
+    assert report.summary.total_descent_m < 17.0
+
+
+def test_extractor_respects_custom_elevation_filter_settings() -> None:
+    start = datetime(2026, 3, 29, 8, 50, 0)
+    frames = [
+        FakeFrame(
+            "session",
+            {
+                "start_time": start,
+                "total_timer_time": 300.0,
+                "total_distance": 500.0,
+            },
+        ),
+    ]
+
+    altitudes = [100.0, 100.6, 100.1, 101.0, 100.4, 101.6, 100.8, 102.0, 101.0, 102.5, 101.4]
+    for index, altitude_m in enumerate(altitudes):
+        frames.append(
+            FakeFrame(
+                "record",
+                {
+                    "timestamp": start + timedelta(seconds=index * 30),
+                    "distance": index * 50.0,
+                    "enhanced_altitude": altitude_m,
+                },
+            )
+        )
+
+    default_report = FitdecodeActivityExtractor(reader_factory=lambda _: FakeReader(frames)).extract(Path("activity.fit"))
+    tuned_report = FitdecodeActivityExtractor(
+        reader_factory=lambda _: FakeReader(frames),
+        summary_builder=SessionSummaryBuilder(
+            elevation_smoothing_distance_m=250.0,
+            min_elevation_change_m=0.8,
+        ),
+    ).extract(Path("activity.fit"))
+
+    assert tuned_report.summary.total_ascent_m < default_report.summary.total_ascent_m
+    assert tuned_report.summary.total_descent_m <= default_report.summary.total_descent_m
 
 
 def test_extractor_omits_grade_when_stopped_distance_change_is_noise() -> None:

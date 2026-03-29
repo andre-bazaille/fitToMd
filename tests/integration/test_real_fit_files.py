@@ -21,6 +21,8 @@ FIT_EXPECTATIONS = {
         "max_hr": 150,
         "avg_cad": 160,
         "avg_speed_kmh": 11.728150527465719,
+        "ascent_m": 171.5,
+        "descent_m": 158.8,
         "splits": 11,
         "transitions": 11,
     },
@@ -31,6 +33,8 @@ FIT_EXPECTATIONS = {
         "max_hr": 151,
         "avg_cad": 159,
         "avg_speed_kmh": 11.34501820918983,
+        "ascent_m": 192.7,
+        "descent_m": 188.5,
         "splits": 12,
         "transitions": 12,
     },
@@ -41,6 +45,8 @@ FIT_EXPECTATIONS = {
         "max_hr": 167,
         "avg_cad": 162,
         "avg_speed_kmh": 11.90076293379808,
+        "ascent_m": 303.4,
+        "descent_m": 404.8,
         "splits": 8,
         "transitions": 8,
     },
@@ -64,6 +70,8 @@ def test_extractor_decodes_real_fit_files(file_name: str, expected: dict[str, fl
     assert report.summary.max_heart_rate_bpm == expected["max_hr"]
     assert report.summary.avg_cadence_spm == expected["avg_cad"]
     assert report.summary.avg_speed_kmh == pytest.approx(expected["avg_speed_kmh"], abs=0.01)
+    assert report.summary.total_ascent_m == pytest.approx(expected["ascent_m"], abs=0.2)
+    assert report.summary.total_descent_m == pytest.approx(expected["descent_m"], abs=0.2)
     assert report.summary.avg_temperature_c is None
     assert report.summary.min_temperature_c is None
     assert report.summary.max_temperature_c is None

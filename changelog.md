@@ -1,5 +1,8 @@
 ## 2026-03-29
 
+- Added CLI flags to tune elevation smoothing distance and minimum elevation change so session gain/loss can be calibrated per device or file set.
+- Replaced raw FIT session ascent/descent totals with a filtered record-derived elevation calculation to reduce barometric noise in session summaries.
+- Added unit and integration coverage for noise-resistant elevation gain/loss handling.
 - Initialized the Python project scaffold with a DDD-aligned `src` layout.
 - Added a CLI entrypoint, domain/application/infrastructure boundaries, and a Markdown renderer.
 - Added unit test scaffolding for the use case, CLI flow, and Markdown rendering.

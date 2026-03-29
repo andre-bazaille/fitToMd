@@ -8,6 +8,12 @@ from fit_to_md.domain.reporting.entities import SessionSummary, Split, Transitio
 from fit_to_md.infrastructure.fitdecode.models import ParsedActivityData, ParsedLap, ParsedRecord
 
 
+_ELEVATION_SMOOTHING_DISTANCE_M = 170.0
+_MIN_ELEVATION_CHANGE_M = 0.4
+_MIN_ELEVATION_SMOOTHING_WINDOW = 3
+_MAX_ELEVATION_SMOOTHING_WINDOW = 51
+
+
 @dataclass(frozen=True)
 class _BoundaryPoint:
     timestamp: datetime
@@ -15,6 +21,19 @@ class _BoundaryPoint:
 
 
 class SessionSummaryBuilder:
+    def __init__(
+        self,
+        elevation_smoothing_distance_m: float = _ELEVATION_SMOOTHING_DISTANCE_M,
+        min_elevation_change_m: float = _MIN_ELEVATION_CHANGE_M,
+    ) -> None:
+        if elevation_smoothing_distance_m <= 0:
+            raise ValueError("elevation_smoothing_distance_m must be positive")
+        if min_elevation_change_m < 0:
+            raise ValueError("min_elevation_change_m must be non-negative")
+
+        self._elevation_smoothing_distance_m = elevation_smoothing_distance_m
+        self._min_elevation_change_m = min_elevation_change_m
+
     def build(self, activity: ParsedActivityData) -> SessionSummary:
         session = activity.session_data
         start_time = _coerce_datetime(session.get("start_time")) or _coerce_datetime(session.get("timestamp"))
@@ -70,13 +89,11 @@ class SessionSummaryBuilder:
         if max_temperature_c is None:
             max_temperature_c = _max_float(lap.max_temperature_c for lap in activity.laps)
 
-        total_ascent_m = _first_float(session, "total_ascent")
-        if total_ascent_m is None:
-            total_ascent_m = _sum_optional(lap.total_ascent_m for lap in activity.laps)
-
-        total_descent_m = _first_float(session, "total_descent")
-        if total_descent_m is None:
-            total_descent_m = _sum_optional(lap.total_descent_m for lap in activity.laps)
+        total_ascent_m, total_descent_m = _resolve_elevation_totals(
+            activity,
+            elevation_smoothing_distance_m=self._elevation_smoothing_distance_m,
+            min_elevation_change_m=self._min_elevation_change_m,
+        )
 
         return SessionSummary(
             start_time=start_time,
@@ -248,6 +265,106 @@ def _derive_avg_speed_kmh(total_distance_m: float | None, total_timer_time_s: fl
     if total_distance_m in (None, 0) or total_timer_time_s in (None, 0):
         return None
     return (total_distance_m / total_timer_time_s) * 3.6
+
+
+def _resolve_elevation_totals(
+    activity: ParsedActivityData,
+    elevation_smoothing_distance_m: float,
+    min_elevation_change_m: float,
+) -> tuple[float | None, float | None]:
+    derived_totals = _derive_elevation_totals(
+        activity.records,
+        elevation_smoothing_distance_m=elevation_smoothing_distance_m,
+        min_elevation_change_m=min_elevation_change_m,
+    )
+    if derived_totals is not None:
+        return derived_totals
+
+    total_ascent_m = _first_float(activity.session_data, "total_ascent")
+    if total_ascent_m is None:
+        total_ascent_m = _sum_optional(lap.total_ascent_m for lap in activity.laps)
+
+    total_descent_m = _first_float(activity.session_data, "total_descent")
+    if total_descent_m is None:
+        total_descent_m = _sum_optional(lap.total_descent_m for lap in activity.laps)
+
+    return total_ascent_m, total_descent_m
+
+
+def _derive_elevation_totals(
+    records: tuple[ParsedRecord, ...],
+    elevation_smoothing_distance_m: float,
+    min_elevation_change_m: float,
+) -> tuple[float, float] | None:
+    altitude_records = [record for record in records if record.altitude_m is not None]
+    if len(altitude_records) < 2:
+        return None
+
+    smoothed_altitudes = _smooth_record_altitudes(
+        altitude_records,
+        elevation_smoothing_distance_m=elevation_smoothing_distance_m,
+    )
+    ascent_m = 0.0
+    descent_m = 0.0
+    previous_altitude = smoothed_altitudes[0]
+
+    for altitude_m in smoothed_altitudes[1:]:
+        delta_m = altitude_m - previous_altitude
+        if delta_m >= min_elevation_change_m:
+            ascent_m += delta_m
+            previous_altitude = altitude_m
+        elif delta_m <= -min_elevation_change_m:
+            descent_m += -delta_m
+            previous_altitude = altitude_m
+
+    return ascent_m, descent_m
+
+
+def _smooth_record_altitudes(
+    records: list[ParsedRecord],
+    elevation_smoothing_distance_m: float,
+) -> list[float]:
+    altitudes = [float(record.altitude_m) for record in records if record.altitude_m is not None]
+    window = _resolve_elevation_smoothing_window(
+        records,
+        elevation_smoothing_distance_m=elevation_smoothing_distance_m,
+    )
+    if window <= 1:
+        return altitudes
+
+    radius = window // 2
+    smoothed_altitudes: list[float] = []
+    for index in range(len(altitudes)):
+        start_index = max(0, index - radius)
+        end_index = min(len(altitudes), index + radius + 1)
+        smoothed_altitudes.append(mean(altitudes[start_index:end_index]))
+    return smoothed_altitudes
+
+
+def _resolve_elevation_smoothing_window(
+    records: list[ParsedRecord],
+    elevation_smoothing_distance_m: float,
+) -> int:
+    max_window = len(records) if len(records) % 2 == 1 else len(records) - 1
+    if max_window < _MIN_ELEVATION_SMOOTHING_WINDOW:
+        return 1
+
+    distances = [float(record.distance_m) for record in records if record.distance_m is not None]
+    average_spacing_m = 0.0
+    if len(distances) >= 2:
+        distance_span_m = max(distances) - min(distances)
+        if distance_span_m > 0:
+            average_spacing_m = distance_span_m / (len(distances) - 1)
+
+    if average_spacing_m > 0:
+        window = round(elevation_smoothing_distance_m / average_spacing_m)
+    else:
+        window = _MIN_ELEVATION_SMOOTHING_WINDOW
+
+    window = max(_MIN_ELEVATION_SMOOTHING_WINDOW, window)
+    if window % 2 == 0:
+        window += 1
+    return min(window, _MAX_ELEVATION_SMOOTHING_WINDOW, max_window)
 
 
 def _resolve_session_avg_cadence(activity: ParsedActivityData) -> int | None:

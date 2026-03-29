@@ -18,6 +18,7 @@ pip install -e .[dev]
 pytest
 python -m fit_to_md --help
 python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --transition-sample-interval 5 --transition-window 90
+python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --elevation-smoothing-distance 220 --elevation-min-change 0.8
 ```
 
 ## Transition Sampling
@@ -30,3 +31,11 @@ Use `--transition-sample-interval` to control how often recovery/ramp samples ar
 The report renderer is section-based, so adding new output blocks should be done by adding a section renderer instead of editing a single monolithic formatter.
 
 The session summary uses FIT-native weather fields when available and, by default, falls back to historical weather lookup based on the activity start location and time. Use `--weather-mode fit` to disable the external fallback.
+
+## Elevation Tuning
+
+Session elevation gain/loss is derived from filtered record altitudes rather than the raw FIT summary totals.
+
+- Use `--elevation-smoothing-distance` to widen or narrow the smoothing span applied before ascent/descent is accumulated.
+- Use `--elevation-min-change` to ignore small residual altitude changes after smoothing.
+- Larger values generally reduce noisy gain/loss totals and can move output closer to Garmin Connect-style corrected elevation.
