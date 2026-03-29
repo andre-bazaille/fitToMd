@@ -7,7 +7,15 @@ from typing import Optional, Sequence, TextIO
 
 from fit_to_md.application.use_cases.generate_markdown_report import GenerateMarkdownReport
 from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
+from fit_to_md.infrastructure.fitdecode.builders import TransitionBuilder
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -22,11 +30,31 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Optional path for the generated Markdown file.",
     )
+    parser.add_argument(
+        "--transition-sample-interval",
+        type=_positive_int,
+        default=10,
+        help="Sampling interval in seconds for transition dynamics output.",
+    )
+    parser.add_argument(
+        "--transition-window",
+        type=_positive_int,
+        default=60,
+        help="Seconds captured before and after each lap transition.",
+    )
     return parser
 
 
-def build_default_generator() -> GenerateMarkdownReport:
-    extractor = FitdecodeActivityExtractor()
+def build_default_generator(
+    transition_sample_interval: int = 10,
+    transition_window: int = 60,
+) -> GenerateMarkdownReport:
+    extractor = FitdecodeActivityExtractor(
+        transition_builder=TransitionBuilder(
+            sample_interval_s=transition_sample_interval,
+            window_s=transition_window,
+        )
+    )
     renderer = MarkdownReportRenderer()
     return GenerateMarkdownReport(extractor=extractor, renderer=renderer)
 
@@ -48,7 +76,10 @@ def run(
         print(f"Input file not found: {input_path}", file=stderr)
         return 2
 
-    generator = report_generator or build_default_generator()
+    generator = report_generator or build_default_generator(
+        transition_sample_interval=args.transition_sample_interval,
+        transition_window=args.transition_window,
+    )
 
     try:
         markdown = generator.execute(input_path)

@@ -17,6 +17,16 @@ python -m venv .venv
 pip install -e .[dev]
 pytest
 python -m fit_to_md --help
+python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --transition-sample-interval 5 --transition-window 90
 ```
 
-The FIT parsing adapter is scaffolded but not implemented yet. The Markdown rendering path and application boundaries are in place so feature work can proceed without restructuring the project.
+## Transition Sampling
+
+Use `--transition-sample-interval` to control how often recovery/ramp samples are emitted and `--transition-window` to control how many seconds before and after each lap boundary are included.
+
+- Smaller intervals increase report detail.
+- Larger windows capture longer recoveries or ramps.
+
+The report renderer is section-based, so adding new output blocks should be done by adding a section renderer instead of editing a single monolithic formatter.
+
+The session summary includes temperature-based weather information when the FIT file provides it.

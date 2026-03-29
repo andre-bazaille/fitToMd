@@ -2,6 +2,7 @@ from datetime import datetime
 
 from fit_to_md.domain.reporting.entities import FitReport, SessionSummary, Split, TransitionDynamics, TransitionSample
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
+from fit_to_md.infrastructure.markdown.sections import ReportSectionRenderer
 
 
 def test_render_formats_expected_markdown_sections() -> None:
@@ -19,6 +20,9 @@ def test_render_formats_expected_markdown_sections() -> None:
             max_heart_rate_bpm=175,
             avg_cadence_spm=172,
             avg_speed_kmh=11.42,
+            avg_temperature_c=18.4,
+            min_temperature_c=15.0,
+            max_temperature_c=22.5,
         ),
         splits=(
             Split(
@@ -50,7 +54,46 @@ def test_render_formats_expected_markdown_sections() -> None:
 
     assert "# FIT Report: 2026-03-29 Long Run" in markdown
     assert "## Session Summary" in markdown
+    assert "- **Start Time:** 2026-03-29 06:30:00" in markdown
+    assert "- **Activity Type:** running" in markdown
     assert "- **Total Distance:** 10.50 km" in markdown
+    assert "- **Weather:** Avg 18.4C / Min 15.0C / Max 22.5C" in markdown
     assert "| 1 | 5:30 | 5:30 | +5m | 125 | 135 | 168 |" in markdown
     assert "- **Transition: Stop of Lap 4 to Start of Lap 5**" in markdown
     assert "T+10s: 165 bpm (Speed: 0.00 km/h, Grade: 0.00%)" in markdown
+
+
+class CustomSection:
+    heading = "Custom"
+
+    def render_lines(self, report: FitReport):
+        return ["- **Extra:** enabled"]
+
+
+def test_render_accepts_custom_section_renderers() -> None:
+    report = FitReport(
+        summary=SessionSummary(
+            start_time=datetime(2026, 3, 29, 6, 30, 0),
+            activity_name="Long Run",
+            activity_type="running",
+            total_distance_km=None,
+            total_timer_time_s=None,
+            total_elapsed_time_s=None,
+            total_ascent_m=None,
+            total_descent_m=None,
+            avg_heart_rate_bpm=None,
+            max_heart_rate_bpm=None,
+            avg_cadence_spm=None,
+            avg_speed_kmh=None,
+            avg_temperature_c=None,
+            min_temperature_c=None,
+            max_temperature_c=None,
+        )
+    )
+
+    renderer = MarkdownReportRenderer(section_renderers=(CustomSection(),))
+
+    markdown = renderer.render(report)
+
+    assert "## Custom" in markdown
+    assert "- **Extra:** enabled" in markdown

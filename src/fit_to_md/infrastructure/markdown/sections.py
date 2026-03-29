@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Protocol, Sequence
+
+from fit_to_md.domain.reporting.entities import FitReport, Split, TransitionDynamics, TransitionSample
+
+
+class ReportSectionRenderer(Protocol):
+    heading: str
+
+    def render_lines(self, report: FitReport) -> Sequence[str]:
+        ...
+
+
+class SessionSummarySectionRenderer:
+    heading = "Session Summary"
+
+    def render_lines(self, report: FitReport) -> Sequence[str]:
+        summary = report.summary
+        return [
+            f"- **Start Time:** {_format_datetime(summary.start_time)}",
+            f"- **Activity Type:** {summary.activity_type or '-'}",
+            f"- **Total Distance:** {_format_distance(summary.total_distance_km)}",
+            f"- **Total Time:** {_format_duration(summary.total_timer_time_s)}",
+            f"- **Elapsed Time:** {_format_duration(summary.total_elapsed_time_s)}",
+            (
+                "- **Elevation Gain/Loss:** "
+                f"{_format_elevation(summary.total_ascent_m, positive_hint=True)} / "
+                f"{_format_elevation(summary.total_descent_m, positive_hint=False)}"
+            ),
+            (
+                "- **Avg/Max HR:** "
+                f"{_format_integer(summary.avg_heart_rate_bpm)} / "
+                f"{_format_integer(summary.max_heart_rate_bpm)} bpm"
+            ),
+            f"- **Avg Cadence:** {_format_integer(summary.avg_cadence_spm)} spm",
+            f"- **Avg Speed:** {_format_speed(summary.avg_speed_kmh)}",
+            f"- **Weather:** {_format_weather(summary.avg_temperature_c, summary.min_temperature_c, summary.max_temperature_c)}",
+        ]
+
+
+class SplitSectionRenderer:
+    heading = "Kilometric Splits"
+
+    def render_lines(self, report: FitReport) -> Sequence[str]:
+        if not report.splits:
+            return ["No split data available."]
+
+        lines = [
+            "| Km | Time | Pace | Elev +/- | Avg HR | Max HR | Avg Cad |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for split in report.splits:
+            lines.append(self._render_split_row(split))
+        return lines
+
+    def _render_split_row(self, split: Split) -> str:
+        return (
+            f"| {split.kilometer} | {_format_duration(split.time_seconds)} | "
+            f"{_format_duration(split.pace_seconds_per_km)} | "
+            f"{_format_signed_metric(split.elevation_delta_m, 'm')} | "
+            f"{_format_integer(split.avg_heart_rate_bpm)} | "
+            f"{_format_integer(split.max_heart_rate_bpm)} | "
+            f"{_format_integer(split.avg_cadence_spm)} |"
+        )
+
+
+class TransitionSectionRenderer:
+    heading = "Heart Rate Dynamics (Recovery & Ramp)"
+
+    def render_lines(self, report: FitReport) -> Sequence[str]:
+        if not report.transitions:
+            return ["No transition samples available."]
+
+        lines: list[str] = []
+        for transition in report.transitions:
+            lines.extend(self._render_transition(transition))
+        return lines
+
+    def _render_transition(self, transition: TransitionDynamics) -> list[str]:
+        lines = [f"- **Transition: {transition.label}**"]
+        for sample in transition.samples:
+            lines.append(self._render_transition_sample(sample))
+        return lines
+
+    def _render_transition_sample(self, sample: TransitionSample) -> str:
+        return (
+            f"  - {_format_offset(sample.offset_seconds)}: {_format_integer(sample.heart_rate_bpm)} bpm "
+            f"(Speed: {_format_speed(sample.speed_kmh)}, Grade: {_format_grade(sample.grade_percent)})"
+        )
+
+
+def _format_datetime(value: datetime | None) -> str:
+    if value is None:
+        return "-"
+    return value.isoformat(sep=" ", timespec="seconds")
+
+
+def _format_distance(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.2f} km"
+
+
+def _format_speed(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.2f} km/h"
+
+
+def _format_weather(avg_temperature_c: float | None, min_temperature_c: float | None, max_temperature_c: float | None) -> str:
+    if avg_temperature_c is None and min_temperature_c is None and max_temperature_c is None:
+        return "Temperature data unavailable"
+    return (
+        f"Avg {_format_temperature(avg_temperature_c)} / "
+        f"Min {_format_temperature(min_temperature_c)} / "
+        f"Max {_format_temperature(max_temperature_c)}"
+    )
+
+
+def _format_temperature(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.1f}C"
+
+
+def _format_grade(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.2f}%"
+
+
+def _format_elevation(value: float | None, positive_hint: bool) -> str:
+    if value is None:
+        return "-"
+    sign = "+" if positive_hint else "-"
+    return f"{sign}{abs(value):.0f}m"
+
+
+def _format_signed_metric(value: float | None, unit: str) -> str:
+    if value is None:
+        return "-"
+    prefix = "+" if value >= 0 else "-"
+    return f"{prefix}{abs(value):.0f}{unit}"
+
+
+def _format_integer(value: int | None) -> str:
+    if value is None:
+        return "-"
+    return str(value)
+
+
+def _format_duration(value: float | None) -> str:
+    if value is None:
+        return "-"
+
+    total_seconds = int(round(value))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
+def _format_offset(value: int) -> str:
+    if value == 0:
+        return "T+0s"
+    prefix = "+" if value > 0 else "-"
+    return f"T{prefix}{abs(value)}s"

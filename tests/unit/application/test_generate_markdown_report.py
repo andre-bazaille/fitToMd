@@ -38,6 +38,9 @@ def test_generate_markdown_report_delegates_to_ports() -> None:
             max_heart_rate_bpm=172,
             avg_cadence_spm=170,
             avg_speed_kmh=12.0,
+            avg_temperature_c=18.0,
+            min_temperature_c=14.0,
+            max_temperature_c=21.0,
         )
     )
     extractor = StubExtractor(report)

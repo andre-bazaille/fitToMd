@@ -19,6 +19,9 @@ class SessionSummary:
     max_heart_rate_bpm: Optional[int]
     avg_cadence_spm: Optional[int]
     avg_speed_kmh: Optional[float]
+    avg_temperature_c: Optional[float]
+    min_temperature_c: Optional[float]
+    max_temperature_c: Optional[float]
 
 
 @dataclass(frozen=True)
