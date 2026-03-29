@@ -13,9 +13,6 @@ from fit_to_md.infrastructure.fitdecode.builders import SessionSummaryBuilder, S
 from fit_to_md.infrastructure.fitdecode.models import ParsedActivityData, ParsedLap, ParsedRecord
 
 
-_MIN_GRADE_DISTANCE_M = 0.5
-
-
 class FitdecodeActivityExtractor:
     def __init__(
         self,
@@ -99,7 +96,7 @@ class FitdecodeActivityExtractor:
 
         normalized_records = tuple(
             _normalize_running_record_cadence(
-                _enrich_record_grades(records),
+                records,
                 sport=sport,
                 session_data=session_data,
             )
@@ -182,34 +179,6 @@ def _extract_message_values(frame: Any) -> dict[str, object]:
     return values
 
 
-def _enrich_record_grades(records: list[ParsedRecord]) -> list[ParsedRecord]:
-    if not records:
-        return []
-
-    ordered_records = sorted(records, key=lambda record: record.timestamp)
-    enriched_records: list[ParsedRecord] = []
-    for index, record in enumerate(ordered_records):
-        grade_percent = record.grade_percent
-        if grade_percent is None:
-            previous_record = ordered_records[index - 1] if index > 0 else None
-            next_record = ordered_records[index + 1] if index + 1 < len(ordered_records) else None
-            grade_percent = _compute_grade(previous_record, record, next_record)
-        enriched_records.append(
-            ParsedRecord(
-                timestamp=record.timestamp,
-                distance_m=record.distance_m,
-                heart_rate_bpm=record.heart_rate_bpm,
-                cadence_spm=record.cadence_spm,
-                fractional_cadence=record.fractional_cadence,
-                speed_mps=record.speed_mps,
-                altitude_m=record.altitude_m,
-                grade_percent=grade_percent,
-                temperature_c=record.temperature_c,
-            )
-        )
-    return enriched_records
-
-
 def _normalize_running_record_cadence(
     records: list[ParsedRecord],
     sport: str | None,
@@ -234,33 +203,6 @@ def _normalize_running_record_cadence(
             )
         )
     return normalized_records
-
-
-def _compute_grade(
-    previous_record: ParsedRecord | None,
-    current_record: ParsedRecord,
-    next_record: ParsedRecord | None,
-) -> float | None:
-    candidates = (
-        (previous_record, next_record),
-        (previous_record, current_record),
-        (current_record, next_record),
-    )
-    for start_record, end_record in candidates:
-        if start_record is None or end_record is None:
-            continue
-        if start_record.distance_m is None or end_record.distance_m is None:
-            continue
-        if start_record.altitude_m is None or end_record.altitude_m is None:
-            continue
-
-        delta_distance = end_record.distance_m - start_record.distance_m
-        if abs(delta_distance) < _MIN_GRADE_DISTANCE_M:
-            continue
-        return ((end_record.altitude_m - start_record.altitude_m) / delta_distance) * 100
-    return None
-
-
 def _resolve_lap_cadence(values: dict[str, object]) -> int | None:
     running_cadence = _coerce_int(values.get("avg_running_cadence"))
     if running_cadence is not None:

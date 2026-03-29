@@ -1,5 +1,6 @@
 ## 2026-03-29
 
+- Replaced noisy record-to-record transition grade synthesis with a smoothed altitude-based grade estimate that reuses the elevation smoothing model and still omits grade when movement is paused or distance context is insufficient.
 - Changed running speed presentation in Markdown reports from km/h to pace per kilometer, including average summary pace and transition samples.
 - Added CLI flags to tune elevation smoothing distance and minimum elevation change so session gain/loss can be calibrated per device or file set.
 - Replaced raw FIT session ascent/descent totals with a filtered record-derived elevation calculation to reduce barometric noise in session summaries.

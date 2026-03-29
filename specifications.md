@@ -40,7 +40,7 @@ Calculated based on 1.0 km increments (or using native lap messages if preferred
 To allow the LLM to judge "how fast HR goes up/down," the tool should extract raw samples at transition points (e.g., the first and last 60 seconds of a lap or workout step):
 
 * **Sample Rate:** Every 5 or 10 seconds during transitions.  
-* **Data Points:** \[Timestamp, Heart Rate, Speed, Grade\].
+* **Data Points:** \[Timestamp, Heart Rate, Speed, Grade\]. Grade should use the native FIT field when available, otherwise estimate it from the same smoothed altitude profile used for elevation gain/loss.
 
 ## **4\. Output Format (Markdown)**
 
@@ -62,7 +62,7 @@ The output should follow this exact structure to ensure LLM readability:
 
 \#\# Heart Rate Dynamics (Recovery & Ramp)  
 \- \*\*Transition: Stop of Lap 4 to Start of Lap 5\*\*  
-  \- T+0s: 175 bpm (Pace: 4:00/km)  
+  \- T+0s: 175 bpm (Pace: 4:00/km, Grade: -2.40%)  
   \- T+10s: 165 bpm (Pace: -)  
   \- T+30s: 150 bpm (Pace: -)  
   \- T+60s: 135 bpm (Pace: -)
@@ -71,7 +71,7 @@ The output should follow this exact structure to ensure LLM readability:
 
 * **Unit Conversion:** Convert semicircles to degrees (if GPS is needed) and meters/sec to min/km.  
 * **Message Filtering:** Only process record messages containing heart\_rate and distance to avoid bloating the output.  
-* **Missing Data:** Implement null checks for sensors (e.g., if no Power Meter or Cadence sensor was present).
+* **Missing Data:** Implement null checks for sensors and optional fields (e.g., if no Power Meter or Cadence sensor was present). If a native Grade field is missing, derive a stable estimate from smoothed altitude and omit it only when movement is paused or there is not enough distance context.
 
 ## **6\. Token Optimization Strategy**
 

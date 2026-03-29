@@ -12,12 +12,19 @@ _ELEVATION_SMOOTHING_DISTANCE_M = 170.0
 _MIN_ELEVATION_CHANGE_M = 0.4
 _MIN_ELEVATION_SMOOTHING_WINDOW = 3
 _MAX_ELEVATION_SMOOTHING_WINDOW = 51
+_TRANSITION_GRADE_DISTANCE_M = 200.0
 
 
 @dataclass(frozen=True)
 class _BoundaryPoint:
     timestamp: datetime
     altitude_m: float | None
+
+
+@dataclass(frozen=True)
+class _DistanceAltitudePoint:
+    distance_m: float
+    altitude_m: float
 
 
 class SessionSummaryBuilder:
@@ -196,14 +203,31 @@ class SplitBuilder:
 
 
 class TransitionBuilder:
-    def __init__(self, sample_interval_s: int = 10, window_s: int = 60) -> None:
+    def __init__(
+        self,
+        sample_interval_s: int = 10,
+        window_s: int = 60,
+        elevation_smoothing_distance_m: float = _ELEVATION_SMOOTHING_DISTANCE_M,
+        grade_distance_m: float = _TRANSITION_GRADE_DISTANCE_M,
+    ) -> None:
+        if elevation_smoothing_distance_m <= 0:
+            raise ValueError("elevation_smoothing_distance_m must be positive")
+        if grade_distance_m <= 0:
+            raise ValueError("grade_distance_m must be positive")
+
         self._sample_interval_s = sample_interval_s
         self._window_s = window_s
+        self._elevation_smoothing_distance_m = elevation_smoothing_distance_m
+        self._grade_distance_m = grade_distance_m
 
     def build(self, activity: ParsedActivityData) -> tuple[TransitionDynamics, ...]:
         if len(activity.laps) < 2 or not activity.records:
             return tuple()
 
+        smoothed_altitude_profile = _build_smoothed_altitude_profile(
+            activity.records,
+            elevation_smoothing_distance_m=self._elevation_smoothing_distance_m,
+        )
         transitions: list[TransitionDynamics] = []
         for previous_lap, next_lap in zip(activity.laps, activity.laps[1:]):
             boundary = next_lap.start_time or previous_lap.end_time
@@ -217,12 +241,20 @@ class TransitionBuilder:
                 if record is None:
                     continue
 
+                grade_percent = record.grade_percent
+                if grade_percent is None:
+                    grade_percent = _estimate_grade_from_smoothed_altitude(
+                        record,
+                        smoothed_altitude_profile,
+                        grade_distance_m=self._grade_distance_m,
+                    )
+
                 samples.append(
                     TransitionSample(
                         offset_seconds=offset_seconds,
                         heart_rate_bpm=record.heart_rate_bpm,
                         speed_kmh=_mps_to_kmh(record.speed_mps),
-                        grade_percent=record.grade_percent,
+                        grade_percent=grade_percent,
                     )
                 )
 
@@ -365,6 +397,83 @@ def _resolve_elevation_smoothing_window(
     if window % 2 == 0:
         window += 1
     return min(window, _MAX_ELEVATION_SMOOTHING_WINDOW, max_window)
+
+
+def _build_smoothed_altitude_profile(
+    records: tuple[ParsedRecord, ...],
+    elevation_smoothing_distance_m: float,
+) -> list[_DistanceAltitudePoint]:
+    altitude_records = [
+        record
+        for record in records
+        if record.distance_m is not None and record.altitude_m is not None
+    ]
+    if len(altitude_records) < 2:
+        return []
+
+    smoothed_altitudes = _smooth_record_altitudes(
+        altitude_records,
+        elevation_smoothing_distance_m=elevation_smoothing_distance_m,
+    )
+    return [
+        _DistanceAltitudePoint(distance_m=float(record.distance_m), altitude_m=smoothed_altitudes[index])
+        for index, record in enumerate(altitude_records)
+    ]
+
+
+def _estimate_grade_from_smoothed_altitude(
+    record: ParsedRecord,
+    profile: list[_DistanceAltitudePoint],
+    grade_distance_m: float,
+) -> float | None:
+    if not profile or record.distance_m is None:
+        return None
+    if record.speed_mps is None or record.speed_mps <= 0:
+        return None
+
+    half_distance = grade_distance_m / 2
+    candidates = (
+        (record.distance_m - half_distance, record.distance_m + half_distance),
+        (record.distance_m - grade_distance_m, record.distance_m),
+        (record.distance_m, record.distance_m + grade_distance_m),
+    )
+    for start_distance_m, end_distance_m in candidates:
+        start_altitude_m = _interpolate_altitude_at_distance(profile, start_distance_m)
+        end_altitude_m = _interpolate_altitude_at_distance(profile, end_distance_m)
+        if start_altitude_m is None or end_altitude_m is None:
+            continue
+
+        delta_distance_m = end_distance_m - start_distance_m
+        if delta_distance_m <= 0:
+            continue
+        return ((end_altitude_m - start_altitude_m) / delta_distance_m) * 100
+    return None
+
+
+def _interpolate_altitude_at_distance(
+    profile: list[_DistanceAltitudePoint],
+    target_distance_m: float,
+) -> float | None:
+    if not profile:
+        return None
+    if target_distance_m < profile[0].distance_m or target_distance_m > profile[-1].distance_m:
+        return None
+    if target_distance_m == profile[0].distance_m:
+        return profile[0].altitude_m
+
+    previous_point = profile[0]
+    for current_point in profile[1:]:
+        if target_distance_m == current_point.distance_m:
+            return current_point.altitude_m
+        if previous_point.distance_m <= target_distance_m <= current_point.distance_m:
+            interval_distance_m = current_point.distance_m - previous_point.distance_m
+            if interval_distance_m == 0:
+                return current_point.altitude_m
+            ratio = (target_distance_m - previous_point.distance_m) / interval_distance_m
+            return previous_point.altitude_m + ((current_point.altitude_m - previous_point.altitude_m) * ratio)
+        previous_point = current_point
+
+    return None
 
 
 def _resolve_session_avg_cadence(activity: ParsedActivityData) -> int | None:

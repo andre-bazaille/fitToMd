@@ -2,7 +2,6 @@ from datetime import datetime
 
 from fit_to_md.domain.reporting.entities import FitReport, SessionSummary, Split, TransitionDynamics, TransitionSample, WeatherSummary
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
-from fit_to_md.infrastructure.markdown.sections import ReportSectionRenderer
 
 
 def test_render_formats_expected_markdown_sections() -> None:
@@ -62,6 +61,46 @@ def test_render_formats_expected_markdown_sections() -> None:
     assert "| 1 | 5:30 | 5:30 | +5m | 125 | 135 | 168 |" in markdown
     assert "- **Transition: Stop of Lap 4 to Start of Lap 5**" in markdown
     assert "T+10s: 165 bpm (Pace: -, Grade: 0.00%)" in markdown
+
+
+def test_render_omits_missing_transition_grade() -> None:
+    report = FitReport(
+        summary=SessionSummary(
+            start_time=datetime(2026, 3, 29, 6, 30, 0),
+            activity_name="Long Run",
+            activity_type="running",
+            total_distance_km=10.5,
+            total_timer_time_s=3312.0,
+            total_elapsed_time_s=3340.0,
+            total_ascent_m=120.0,
+            total_descent_m=115.0,
+            avg_heart_rate_bpm=142,
+            max_heart_rate_bpm=175,
+            avg_cadence_spm=172,
+            avg_speed_kmh=11.42,
+            avg_temperature_c=18.4,
+            min_temperature_c=15.0,
+            max_temperature_c=22.5,
+        ),
+        transitions=(
+            TransitionDynamics(
+                label="End of Lap 1 to Start of Lap 2",
+                samples=(
+                    TransitionSample(
+                        offset_seconds=0,
+                        heart_rate_bpm=155,
+                        speed_kmh=12.0,
+                        grade_percent=None,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    markdown = MarkdownReportRenderer().render(report)
+
+    assert "T+0s: 155 bpm (Pace: 5:00/km)" in markdown
+    assert "Grade:" not in markdown
 
 
 class CustomSection:

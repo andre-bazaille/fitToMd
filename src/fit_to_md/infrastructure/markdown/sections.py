@@ -87,10 +87,12 @@ class TransitionSectionRenderer:
 
     def _render_transition_sample(self, sample: TransitionSample, report_activity_type: str | None) -> str:
         speed_label = "Pace" if _uses_pace(report_activity_type) else "Speed"
+        metrics = [f"{speed_label}: {_format_speed_metric(sample.speed_kmh, report_activity_type)}"]
+        if sample.grade_percent is not None:
+            metrics.append(f"Grade: {_format_grade(sample.grade_percent)}")
         return (
             f"  - {_format_offset(sample.offset_seconds)}: {_format_integer(sample.heart_rate_bpm)} bpm "
-            f"({speed_label}: {_format_speed_metric(sample.speed_kmh, report_activity_type)}, "
-            f"Grade: {_format_grade(sample.grade_percent)})"
+            f"({', '.join(metrics)})"
         )
 
 

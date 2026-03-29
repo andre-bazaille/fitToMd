@@ -150,3 +150,29 @@ def test_extractor_omits_paused_transition_grade_for_real_fit_file() -> None:
     assert report.transitions[-1].samples[-1].offset_seconds == 60
     assert report.transitions[-1].samples[-1].speed_kmh == pytest.approx(0.0)
     assert report.transitions[-1].samples[-1].grade_percent is None
+
+
+def test_extractor_estimates_smoothed_transition_grade_for_real_fit_file() -> None:
+    fit_file = FIXTURE_DIR / "2026-03-24-12-20-27.fit"
+
+    report = FitdecodeActivityExtractor().extract(fit_file)
+
+    transition_grades = [
+        sample.grade_percent
+        for transition in report.transitions
+        for sample in transition.samples
+        if sample.speed_kmh is not None and sample.speed_kmh > 0
+    ]
+
+    assert transition_grades
+    assert max(abs(grade) for grade in transition_grades if grade is not None) < 22.0
+    assert report.transitions[0].samples[6].grade_percent == pytest.approx(-8.81, abs=0.2)
+
+
+def test_renderer_shows_estimated_grade_for_real_fit_file_without_native_grade() -> None:
+    fit_file = FIXTURE_DIR / "2026-03-24-12-20-27.fit"
+
+    markdown = MarkdownReportRenderer().render(FitdecodeActivityExtractor().extract(fit_file))
+
+    assert "## Heart Rate Dynamics (Recovery & Ramp)" in markdown
+    assert "Grade:" in markdown

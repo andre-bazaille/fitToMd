@@ -523,6 +523,62 @@ def test_extractor_omits_grade_when_stopped_distance_change_is_noise() -> None:
     assert report.transitions[0].samples[-1].grade_percent is None
 
 
+def test_extractor_estimates_grade_from_smoothed_altitude_when_fit_grade_missing() -> None:
+    start = datetime(2026, 3, 29, 9, 30, 0)
+    frames = [
+        FakeFrame("sport", {"sport": "running"}),
+        FakeFrame(
+            "session",
+            {
+                "start_time": start,
+                "total_timer_time": 120.0,
+                "total_distance": 1000.0,
+            },
+        ),
+        FakeFrame(
+            "lap",
+            {
+                "start_time": start,
+                "timestamp": start + timedelta(seconds=60),
+                "total_distance": 500.0,
+                "total_timer_time": 60.0,
+            },
+        ),
+        FakeFrame(
+            "lap",
+            {
+                "start_time": start + timedelta(seconds=60),
+                "timestamp": start + timedelta(seconds=120),
+                "total_distance": 500.0,
+                "total_timer_time": 60.0,
+            },
+        ),
+    ]
+    frames.extend(
+        FakeFrame(
+            "record",
+            {
+                "timestamp": start + timedelta(seconds=offset_seconds),
+                "distance": float(index * 100),
+                "heart_rate": 120 + index,
+                "cadence": 80,
+                "fractional_cadence": 0.0,
+                "enhanced_speed": 8.333333333,
+                "enhanced_altitude": float(index * 10),
+            },
+        )
+        for index, offset_seconds in enumerate(range(0, 121, 12))
+    )
+
+    report = FitdecodeActivityExtractor(
+        reader_factory=lambda _: FakeReader(frames),
+        transition_builder=TransitionBuilder(sample_interval_s=60, window_s=0),
+    ).extract(Path("activity.fit"))
+
+    assert len(report.transitions[0].samples) == 1
+    assert report.transitions[0].samples[0].grade_percent == pytest.approx(10.0, abs=0.01)
+
+
 def _record_frames(start: datetime) -> list[FakeFrame]:
     frames: list[FakeFrame] = []
     for seconds in range(0, 721, 30):
