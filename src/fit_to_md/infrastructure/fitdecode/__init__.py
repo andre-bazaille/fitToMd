@@ -1,0 +1,1 @@
+"""FIT decoding adapter package."""
