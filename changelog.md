@@ -1,5 +1,14 @@
 ## 2026-03-29
 
+- Enforced OpenTopoData public API limits in the elevation adapter, including 100 locations per request, 1 request per second, and a stateless per-run cap of 1000 requests.
+- Added CLI reporting for OpenTopoData request usage at the end of each run without persisting cross-run daily counters.
+- Added OpenTopoData request progress reporting on stderr while DEM batches are being fetched in `dem` and `hybrid` modes.
+- Added CLI options for OpenTopoData dataset and base URL so DEM lookups can target the public service or a self-hosted instance without code changes.
+- Added a hybrid elevation mode that keeps FIT altitude when the trace looks stable and falls back to DEM elevation when the FIT altitude is clearly noisy.
+- Added a DEM elevation provider abstraction and an initial OpenTopoData-backed implementation so elevation can be sourced from terrain data instead of FIT altitude.
+- Added route resampling for DEM lookup with a new CLI parameter to control the sample spacing, defaulting to 30 meters.
+- Wired a new CLI elevation source switch so reports can use either FIT-native altitude or DEM-derived altitude.
+- Added unit coverage for OpenTopoData request parsing and DEM-based elevation replacement in the FIT extractor.
 - Switched Heart Rate Dynamics from lap-based transitions to per-kilometer elapsed time series so each completed kilometer reports HR/pace/grade from `0:00` to the split finish, with a configurable CLI step size that defaults to 15 seconds.
 - Replaced noisy record-to-record transition grade synthesis with a smoothed altitude-based grade estimate that reuses the elevation smoothing model and still omits grade when movement is paused or distance context is insufficient.
 - Changed running speed presentation in Markdown reports from km/h to pace per kilometer, including average summary pace and transition samples.

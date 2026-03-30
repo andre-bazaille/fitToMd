@@ -546,6 +546,8 @@ def _interpolate_record_at_time(records: tuple[ParsedRecord, ...], target_time: 
             return ParsedRecord(
                 timestamp=target_time,
                 distance_m=_interpolate_float(previous_record.distance_m, current_record.distance_m, ratio),
+                latitude_deg=_interpolate_float(previous_record.latitude_deg, current_record.latitude_deg, ratio),
+                longitude_deg=_interpolate_float(previous_record.longitude_deg, current_record.longitude_deg, ratio),
                 heart_rate_bpm=_interpolate_int(previous_record.heart_rate_bpm, current_record.heart_rate_bpm, ratio),
                 cadence_spm=_interpolate_int(previous_record.cadence_spm, current_record.cadence_spm, ratio),
                 fractional_cadence=_interpolate_float(

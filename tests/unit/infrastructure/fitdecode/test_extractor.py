@@ -8,6 +8,7 @@ import pytest
 
 from fit_to_md.infrastructure.fitdecode.builders import SessionSummaryBuilder, TransitionBuilder
 from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
+from fit_to_md.domain.reporting.ports import ElevationCoordinate
 from fit_to_md.domain.reporting.entities import WeatherSummary
 
 
@@ -603,6 +604,170 @@ def test_extractor_estimates_grade_from_smoothed_altitude_when_fit_grade_missing
 
     assert len(report.transitions[0].samples) == 2
     assert report.transitions[0].samples[-1].grade_percent == pytest.approx(7.5, abs=0.01)
+
+
+def test_extractor_replaces_fit_altitude_with_dem_samples() -> None:
+    start = datetime(2026, 3, 29, 10, 0, 0)
+    frames = [
+        FakeFrame(
+            "session",
+            {
+                "start_time": start,
+                "timestamp": start + timedelta(seconds=100),
+                "total_timer_time": 100.0,
+                "total_distance": 1000.0,
+            },
+        ),
+    ]
+
+    for index in range(11):
+        frames.append(
+            FakeFrame(
+                "record",
+                {
+                    "timestamp": start + timedelta(seconds=index * 10),
+                    "distance": float(index * 100),
+                    "position_lat": _degrees_to_semicircles(45.0 + (index * 0.0001)),
+                    "position_long": _degrees_to_semicircles(7.0 + (index * 0.0001)),
+                    "heart_rate": 120 + index,
+                    "cadence": 80,
+                    "fractional_cadence": 0.0,
+                    "enhanced_speed": 10.0,
+                    "enhanced_altitude": [100.0, 140.0, 95.0, 150.0, 100.0, 160.0, 105.0, 170.0, 110.0, 180.0, 115.0][index],
+                    "grade": 99.0,
+                },
+            )
+        )
+
+    class StubElevationProvider:
+        def __init__(self) -> None:
+            self.calls: list[tuple[ElevationCoordinate, ...]] = []
+
+        def lookup(self, coordinates: tuple[ElevationCoordinate, ...]) -> tuple[float | None, ...]:
+            self.calls.append(coordinates)
+            return (100.0, 102.5, 105.0, 107.5, 110.0)
+
+    elevation_provider = StubElevationProvider()
+    extractor = FitdecodeActivityExtractor(
+        reader_factory=lambda _: FakeReader(frames),
+        elevation_provider=elevation_provider,
+        elevation_mode="dem",
+        elevation_sample_distance_m=250.0,
+        transition_builder=TransitionBuilder(sample_interval_s=100),
+    )
+
+    report = extractor.extract(Path("activity.fit"))
+
+    assert elevation_provider.calls
+    assert len(elevation_provider.calls[0]) == 5
+    assert report.summary.total_ascent_m == pytest.approx(10.0, abs=1.0)
+    assert report.summary.total_descent_m == pytest.approx(0.0, abs=0.5)
+    assert report.transitions[0].samples[-1].grade_percent == pytest.approx(0.75, abs=0.1)
+
+
+def test_extractor_hybrid_keeps_stable_fit_altitude() -> None:
+    start = datetime(2026, 3, 29, 10, 15, 0)
+    frames = [
+        FakeFrame(
+            "session",
+            {
+                "start_time": start,
+                "timestamp": start + timedelta(seconds=100),
+                "total_timer_time": 100.0,
+                "total_distance": 1000.0,
+            },
+        ),
+    ]
+
+    for index in range(11):
+        frames.append(
+            FakeFrame(
+                "record",
+                {
+                    "timestamp": start + timedelta(seconds=index * 10),
+                    "distance": float(index * 100),
+                    "position_lat": _degrees_to_semicircles(45.5 + (index * 0.0001)),
+                    "position_long": _degrees_to_semicircles(7.5 + (index * 0.0001)),
+                    "heart_rate": 120 + index,
+                    "cadence": 80,
+                    "fractional_cadence": 0.0,
+                    "enhanced_speed": 10.0,
+                    "enhanced_altitude": 100.0 + index,
+                    "grade": 7.0,
+                },
+            )
+        )
+
+    class StubElevationProvider:
+        def lookup(self, coordinates: tuple[ElevationCoordinate, ...]) -> tuple[float | None, ...]:
+            return (200.0, 205.0, 210.0, 215.0, 220.0)
+
+    report = FitdecodeActivityExtractor(
+        reader_factory=lambda _: FakeReader(frames),
+        elevation_provider=StubElevationProvider(),
+        elevation_mode="hybrid",
+        elevation_sample_distance_m=250.0,
+        transition_builder=TransitionBuilder(sample_interval_s=100),
+    ).extract(Path("activity.fit"))
+
+    assert report.summary.total_ascent_m == pytest.approx(10.0, abs=1.0)
+    assert report.summary.total_descent_m == pytest.approx(0.0, abs=0.5)
+    assert report.transitions[0].samples[-1].grade_percent == pytest.approx(7.0)
+
+
+def test_extractor_hybrid_replaces_noisy_fit_altitude() -> None:
+    start = datetime(2026, 3, 29, 10, 30, 0)
+    frames = [
+        FakeFrame(
+            "session",
+            {
+                "start_time": start,
+                "timestamp": start + timedelta(seconds=100),
+                "total_timer_time": 100.0,
+                "total_distance": 1000.0,
+            },
+        ),
+    ]
+
+    noisy_altitudes = [100.0, 140.0, 95.0, 150.0, 100.0, 160.0, 105.0, 170.0, 110.0, 180.0, 115.0]
+    for index, altitude_m in enumerate(noisy_altitudes):
+        frames.append(
+            FakeFrame(
+                "record",
+                {
+                    "timestamp": start + timedelta(seconds=index * 10),
+                    "distance": float(index * 100),
+                    "position_lat": _degrees_to_semicircles(46.0 + (index * 0.0001)),
+                    "position_long": _degrees_to_semicircles(8.0 + (index * 0.0001)),
+                    "heart_rate": 120 + index,
+                    "cadence": 80,
+                    "fractional_cadence": 0.0,
+                    "enhanced_speed": 10.0,
+                    "enhanced_altitude": altitude_m,
+                    "grade": 99.0,
+                },
+            )
+        )
+
+    class StubElevationProvider:
+        def lookup(self, coordinates: tuple[ElevationCoordinate, ...]) -> tuple[float | None, ...]:
+            return (100.0, 102.5, 105.0, 107.5, 110.0)
+
+    report = FitdecodeActivityExtractor(
+        reader_factory=lambda _: FakeReader(frames),
+        elevation_provider=StubElevationProvider(),
+        elevation_mode="hybrid",
+        elevation_sample_distance_m=250.0,
+        transition_builder=TransitionBuilder(sample_interval_s=100),
+    ).extract(Path("activity.fit"))
+
+    assert report.summary.total_ascent_m == pytest.approx(10.0, abs=1.0)
+    assert report.summary.total_descent_m == pytest.approx(0.0, abs=0.5)
+    assert report.transitions[0].samples[-1].grade_percent == pytest.approx(0.75, abs=0.1)
+
+
+def _degrees_to_semicircles(value: float) -> int:
+    return round((value * (2**31)) / 180.0)
 
 
 def _record_frames(start: datetime) -> list[FakeFrame]:

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional, Sequence, TextIO
 
 from fit_to_md.application.use_cases.generate_markdown_report import GenerateMarkdownReport
+from fit_to_md.infrastructure.elevation import OpenTopoDataElevationProvider
 from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
 from fit_to_md.infrastructure.fitdecode.builders import SessionSummaryBuilder, TransitionBuilder
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
@@ -72,6 +73,28 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.4,
         help="Minimum altitude change in meters counted toward session gain/loss after smoothing.",
     )
+    parser.add_argument(
+        "--elevation-source",
+        choices=("fit", "dem", "hybrid"),
+        default="dem",
+        help="Use FIT altitude, DEM altitude, or DEM only when FIT altitude looks noisy.",
+    )
+    parser.add_argument(
+        "--dem-sample-distance",
+        type=_positive_float,
+        default=25.0,
+        help="Distance in meters between route samples queried from the DEM provider.",
+    )
+    parser.add_argument(
+        "--opentopodata-dataset",
+        default="eudem25m",
+        help="OpenTopoData dataset to query for DEM altitude.",
+    )
+    parser.add_argument(
+        "--opentopodata-base-url",
+        default="https://api.opentopodata.org",
+        help="OpenTopoData base URL, useful for self-hosted instances.",
+    )
     return parser
 
 
@@ -80,8 +103,20 @@ def build_default_generator(
     weather_mode: str = "auto",
     elevation_smoothing_distance: float = 170.0,
     elevation_min_change: float = 0.4,
+    elevation_source: str = "fit",
+    dem_sample_distance: float = 30.0,
+    opentopodata_dataset: str = "eudem25m",
+    opentopodata_base_url: str = "https://api.opentopodata.org",
 ) -> GenerateMarkdownReport:
     weather_provider = OpenMeteoHistoricalWeatherProvider() if weather_mode == "auto" else None
+    elevation_provider = (
+        OpenTopoDataElevationProvider(
+            base_url=opentopodata_base_url,
+            dataset=opentopodata_dataset,
+        )
+        if elevation_source in {"dem", "hybrid"}
+        else None
+    )
     extractor = FitdecodeActivityExtractor(
         summary_builder=SessionSummaryBuilder(
             elevation_smoothing_distance_m=elevation_smoothing_distance,
@@ -91,6 +126,9 @@ def build_default_generator(
             sample_interval_s=dynamics_step_size,
         ),
         weather_provider=weather_provider,
+        elevation_provider=elevation_provider,
+        elevation_mode=elevation_source,
+        elevation_sample_distance_m=dem_sample_distance,
     )
     renderer = MarkdownReportRenderer()
     return GenerateMarkdownReport(extractor=extractor, renderer=renderer)
@@ -118,11 +156,16 @@ def run(
         weather_mode=args.weather_mode,
         elevation_smoothing_distance=args.elevation_smoothing_distance,
         elevation_min_change=args.elevation_min_change,
+        elevation_source=args.elevation_source,
+        dem_sample_distance=args.dem_sample_distance,
+        opentopodata_dataset=args.opentopodata_dataset,
+        opentopodata_base_url=args.opentopodata_base_url,
     )
+    _configure_elevation_progress(generator, stderr)
 
     try:
         markdown = generator.execute(input_path)
-    except NotImplementedError as error:
+    except (NotImplementedError, RuntimeError) as error:
         print(str(error), file=stderr)
         return 1
 
@@ -130,11 +173,51 @@ def run(
         stdout.write(markdown)
         if not markdown.endswith("\n"):
             stdout.write("\n")
+        _write_elevation_usage_summary(generator, stderr)
         return 0
 
     args.output.write_text(markdown, encoding="utf-8")
+    _write_elevation_usage_summary(generator, stderr)
     return 0
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     return run(argv=argv)
+
+
+def _write_elevation_usage_summary(generator: GenerateMarkdownReport, stream: TextIO) -> None:
+    extractor = getattr(generator, "_extractor", None)
+    if extractor is None:
+        return
+
+    elevation_provider = getattr(extractor, "_elevation_provider", None)
+    if elevation_provider is None:
+        return
+
+    usage_summary_fn = getattr(elevation_provider, "usage_summary", None)
+    if not callable(usage_summary_fn):
+        return
+
+    print(usage_summary_fn(), file=stream)
+
+
+def _configure_elevation_progress(generator: GenerateMarkdownReport, stream: TextIO) -> None:
+    extractor = getattr(generator, "_extractor", None)
+    if extractor is None:
+        return
+
+    elevation_provider = getattr(extractor, "_elevation_provider", None)
+    if elevation_provider is None:
+        return
+
+    set_progress_callback_fn = getattr(elevation_provider, "set_progress_callback", None)
+    if not callable(set_progress_callback_fn):
+        return
+
+    def _write_progress(current_request: int, total_requests: int) -> None:
+        print(
+            f"OpenTopoData progress: request {current_request}/{total_requests}",
+            file=stream,
+        )
+
+    set_progress_callback_fn(_write_progress)

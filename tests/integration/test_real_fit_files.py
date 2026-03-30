@@ -119,9 +119,11 @@ def test_cli_uses_real_fit_file_and_respects_transition_options() -> None:
     )
 
     output = stdout.getvalue()
+    error_output = stderr.getvalue()
 
     assert exit_code == 0
-    assert stderr.getvalue() == ""
+    assert "OpenTopoData progress: request" in error_output
+    assert "OpenTopoData public API calls this run:" in error_output
     assert "# FIT Report: 2026-03-24 Running" in output
     assert "0:05:" in output
     assert output.count("0:00:") == FIT_EXPECTATIONS[fit_file.name]["transitions"]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable
@@ -8,9 +8,22 @@ from typing import Any, Callable
 import fitdecode
 
 from fit_to_md.domain.reporting.entities import FitReport, SessionSummary
-from fit_to_md.domain.reporting.ports import HistoricalWeatherProvider
+from fit_to_md.domain.reporting.ports import ElevationCoordinate, ElevationProvider, HistoricalWeatherProvider
 from fit_to_md.infrastructure.fitdecode.builders import SessionSummaryBuilder, SplitBuilder, TransitionBuilder
 from fit_to_md.infrastructure.fitdecode.models import ParsedActivityData, ParsedLap, ParsedRecord
+
+
+@dataclass(frozen=True)
+class _DistanceCoordinatePoint:
+    distance_m: float
+    latitude_deg: float
+    longitude_deg: float
+
+
+@dataclass(frozen=True)
+class _DistanceElevationPoint:
+    distance_m: float
+    altitude_m: float
 
 
 class FitdecodeActivityExtractor:
@@ -21,15 +34,27 @@ class FitdecodeActivityExtractor:
         split_builder: SplitBuilder | None = None,
         transition_builder: TransitionBuilder | None = None,
         weather_provider: HistoricalWeatherProvider | None = None,
+        elevation_provider: ElevationProvider | None = None,
+        elevation_mode: str = "fit",
+        elevation_sample_distance_m: float = 30.0,
     ) -> None:
+        if elevation_mode not in {"fit", "dem", "hybrid"}:
+            raise ValueError("elevation_mode must be one of: fit, dem, hybrid")
+        if elevation_sample_distance_m <= 0:
+            raise ValueError("elevation_sample_distance_m must be positive")
+
         self._reader_factory = reader_factory or fitdecode.FitReader
         self._summary_builder = summary_builder or SessionSummaryBuilder()
         self._split_builder = split_builder or SplitBuilder()
         self._transition_builder = transition_builder or TransitionBuilder()
         self._weather_provider = weather_provider
+        self._elevation_provider = elevation_provider
+        self._elevation_mode = elevation_mode
+        self._elevation_sample_distance_m = elevation_sample_distance_m
 
     def extract(self, source: Path) -> FitReport:
         activity = self._parse_activity(source)
+        activity = self._enrich_activity_elevation(activity)
         summary = self._summary_builder.build(activity)
         summary = self._enrich_summary_weather(summary, activity)
         return FitReport(
@@ -37,6 +62,20 @@ class FitdecodeActivityExtractor:
             splits=self._split_builder.build(activity),
             transitions=self._transition_builder.build(activity),
         )
+
+    def _enrich_activity_elevation(self, activity: ParsedActivityData) -> ParsedActivityData:
+        if self._elevation_mode == "fit" or self._elevation_provider is None:
+            return activity
+
+        enriched_records = _replace_record_altitudes_from_dem(
+            activity.records,
+            elevation_provider=self._elevation_provider,
+            elevation_mode=self._elevation_mode,
+            sample_distance_m=self._elevation_sample_distance_m,
+        )
+        if enriched_records == activity.records:
+            return activity
+        return replace(activity, records=enriched_records)
 
     def _enrich_summary_weather(self, summary: SessionSummary, activity: ParsedActivityData) -> SessionSummary:
         if self._weather_provider is None or summary.weather is not None:
@@ -139,6 +178,8 @@ def _parse_record(frame: Any) -> ParsedRecord | None:
     record = ParsedRecord(
         timestamp=timestamp,
         distance_m=_coerce_float(values.get("distance")),
+        latitude_deg=_semicircles_to_degrees(values.get("position_lat")),
+        longitude_deg=_semicircles_to_degrees(values.get("position_long")),
         heart_rate_bpm=_coerce_int(values.get("heart_rate")),
         cadence_spm=_coerce_int(values.get("cadence")),
         fractional_cadence=_coerce_float(values.get("fractional_cadence")),
@@ -193,6 +234,8 @@ def _normalize_running_record_cadence(
             ParsedRecord(
                 timestamp=record.timestamp,
                 distance_m=record.distance_m,
+                latitude_deg=record.latitude_deg,
+                longitude_deg=record.longitude_deg,
                 heart_rate_bpm=record.heart_rate_bpm,
                 cadence_spm=_normalize_running_cadence(record.cadence_spm, record.fractional_cadence),
                 fractional_cadence=record.fractional_cadence,
@@ -262,3 +305,254 @@ def _semicircles_to_degrees(value: object) -> float | None:
     if semicircles is None:
         return None
     return (semicircles * 180.0) / (2**31)
+
+
+def _replace_record_altitudes_from_dem(
+    records: tuple[ParsedRecord, ...],
+    elevation_provider: ElevationProvider,
+    elevation_mode: str,
+    sample_distance_m: float,
+) -> tuple[ParsedRecord, ...]:
+    coordinate_profile = _build_distance_coordinate_profile(records)
+    if len(coordinate_profile) < 2:
+        return records
+
+    sampled_points = _build_resampled_route_points(
+        coordinate_profile,
+        sample_distance_m=sample_distance_m,
+    )
+    if len(sampled_points) < 2:
+        return records
+
+    sampled_elevations = elevation_provider.lookup(
+        tuple(
+            ElevationCoordinate(
+                latitude_deg=point.latitude_deg,
+                longitude_deg=point.longitude_deg,
+            )
+            for point in sampled_points
+        )
+    )
+    elevation_profile = [
+        _DistanceElevationPoint(distance_m=point.distance_m, altitude_m=elevation_m)
+        for point, elevation_m in zip(sampled_points, sampled_elevations)
+        if elevation_m is not None
+    ]
+    if len(elevation_profile) < 2:
+        return records
+    if elevation_mode == "hybrid" and not _should_replace_fit_altitude(records, elevation_profile):
+        return records
+
+    enriched_records: list[ParsedRecord] = []
+    changed = False
+    for record in records:
+        altitude_m = record.altitude_m
+        if record.distance_m is not None:
+            dem_altitude_m = _interpolate_altitude_at_distance(elevation_profile, record.distance_m)
+            if dem_altitude_m is not None:
+                altitude_m = dem_altitude_m
+
+        grade_percent = None
+        if altitude_m != record.altitude_m or record.grade_percent is not None:
+            changed = True
+
+        enriched_records.append(
+            ParsedRecord(
+                timestamp=record.timestamp,
+                distance_m=record.distance_m,
+                latitude_deg=record.latitude_deg,
+                longitude_deg=record.longitude_deg,
+                heart_rate_bpm=record.heart_rate_bpm,
+                cadence_spm=record.cadence_spm,
+                fractional_cadence=record.fractional_cadence,
+                speed_mps=record.speed_mps,
+                altitude_m=altitude_m,
+                grade_percent=grade_percent,
+                temperature_c=record.temperature_c,
+            )
+        )
+
+    if not changed:
+        return records
+    return tuple(enriched_records)
+
+
+def _should_replace_fit_altitude(
+    records: tuple[ParsedRecord, ...],
+    dem_profile: list[_DistanceElevationPoint],
+) -> bool:
+    fit_profile = _build_distance_altitude_profile(records)
+    if len(fit_profile) < 5:
+        return False
+
+    fit_aligned_altitudes = [
+        _interpolate_altitude_at_distance(fit_profile, point.distance_m)
+        for point in dem_profile
+    ]
+    aligned_pairs = [
+        (fit_altitude_m, dem_point.altitude_m)
+        for fit_altitude_m, dem_point in zip(fit_aligned_altitudes, dem_profile)
+        if fit_altitude_m is not None
+    ]
+    if len(aligned_pairs) < 5:
+        return False
+
+    fit_total_variation_m = _total_variation(value for value, _ in aligned_pairs)
+    dem_total_variation_m = _total_variation(value for _, value in aligned_pairs)
+    mean_abs_difference_m = sum(abs(fit - dem) for fit, dem in aligned_pairs) / len(aligned_pairs)
+    fit_sign_flip_ratio = _segment_sign_flip_ratio(value for value, _ in aligned_pairs)
+
+    return (
+        fit_total_variation_m >= max(dem_total_variation_m * 2.0, dem_total_variation_m + 20.0)
+        and mean_abs_difference_m >= 8.0
+        and fit_sign_flip_ratio >= 0.3
+    )
+
+
+def _build_distance_altitude_profile(records: tuple[ParsedRecord, ...]) -> list[_DistanceElevationPoint]:
+    profile: list[_DistanceElevationPoint] = []
+    for record in records:
+        if record.distance_m is None or record.altitude_m is None:
+            continue
+        profile.append(
+            _DistanceElevationPoint(
+                distance_m=float(record.distance_m),
+                altitude_m=float(record.altitude_m),
+            )
+        )
+    return profile
+
+
+def _total_variation(values: Any) -> float:
+    collected = [float(value) for value in values]
+    if len(collected) < 2:
+        return 0.0
+
+    total = 0.0
+    previous = collected[0]
+    for current in collected[1:]:
+        total += abs(current - previous)
+        previous = current
+    return total
+
+
+def _segment_sign_flip_ratio(values: Any) -> float:
+    collected = [float(value) for value in values]
+    if len(collected) < 3:
+        return 0.0
+
+    directions: list[int] = []
+    previous = collected[0]
+    for current in collected[1:]:
+        delta = current - previous
+        previous = current
+        if abs(delta) < 0.5:
+            continue
+        directions.append(1 if delta > 0 else -1)
+
+    if len(directions) < 2:
+        return 0.0
+
+    sign_flips = 0
+    previous_direction = directions[0]
+    for direction in directions[1:]:
+        if direction != previous_direction:
+            sign_flips += 1
+        previous_direction = direction
+    return sign_flips / (len(directions) - 1)
+
+
+def _build_distance_coordinate_profile(records: tuple[ParsedRecord, ...]) -> list[_DistanceCoordinatePoint]:
+    profile: list[_DistanceCoordinatePoint] = []
+    for record in records:
+        if record.distance_m is None or record.latitude_deg is None or record.longitude_deg is None:
+            continue
+        profile.append(
+            _DistanceCoordinatePoint(
+                distance_m=float(record.distance_m),
+                latitude_deg=float(record.latitude_deg),
+                longitude_deg=float(record.longitude_deg),
+            )
+        )
+    return profile
+
+
+def _build_resampled_route_points(
+    profile: list[_DistanceCoordinatePoint],
+    sample_distance_m: float,
+) -> list[_DistanceCoordinatePoint]:
+    origin_distance_m = profile[0].distance_m
+    final_distance_m = profile[-1].distance_m
+    if final_distance_m <= origin_distance_m:
+        return profile[:1]
+
+    target_distances_m: list[float] = []
+    current_distance_m = origin_distance_m
+    while current_distance_m < final_distance_m:
+        target_distances_m.append(current_distance_m)
+        current_distance_m += sample_distance_m
+    if not target_distances_m or target_distances_m[-1] != final_distance_m:
+        target_distances_m.append(final_distance_m)
+
+    sampled_points: list[_DistanceCoordinatePoint] = []
+    for target_distance_m in target_distances_m:
+        point = _interpolate_coordinate_at_distance(profile, target_distance_m)
+        if point is not None:
+            sampled_points.append(point)
+    return sampled_points
+
+
+def _interpolate_coordinate_at_distance(
+    profile: list[_DistanceCoordinatePoint],
+    target_distance_m: float,
+) -> _DistanceCoordinatePoint | None:
+    if not profile:
+        return None
+    if target_distance_m < profile[0].distance_m or target_distance_m > profile[-1].distance_m:
+        return None
+    if target_distance_m == profile[0].distance_m:
+        return profile[0]
+
+    previous_point = profile[0]
+    for current_point in profile[1:]:
+        if target_distance_m == current_point.distance_m:
+            return current_point
+        if previous_point.distance_m <= target_distance_m <= current_point.distance_m:
+            delta_distance_m = current_point.distance_m - previous_point.distance_m
+            if delta_distance_m == 0:
+                return current_point
+            ratio = (target_distance_m - previous_point.distance_m) / delta_distance_m
+            return _DistanceCoordinatePoint(
+                distance_m=target_distance_m,
+                latitude_deg=previous_point.latitude_deg
+                + ((current_point.latitude_deg - previous_point.latitude_deg) * ratio),
+                longitude_deg=previous_point.longitude_deg
+                + ((current_point.longitude_deg - previous_point.longitude_deg) * ratio),
+            )
+        previous_point = current_point
+    return None
+
+
+def _interpolate_altitude_at_distance(
+    profile: list[_DistanceElevationPoint],
+    target_distance_m: float,
+) -> float | None:
+    if not profile:
+        return None
+    if target_distance_m < profile[0].distance_m or target_distance_m > profile[-1].distance_m:
+        return None
+    if target_distance_m == profile[0].distance_m:
+        return profile[0].altitude_m
+
+    previous_point = profile[0]
+    for current_point in profile[1:]:
+        if target_distance_m == current_point.distance_m:
+            return current_point.altitude_m
+        if previous_point.distance_m <= target_distance_m <= current_point.distance_m:
+            delta_distance_m = current_point.distance_m - previous_point.distance_m
+            if delta_distance_m == 0:
+                return current_point.altitude_m
+            ratio = (target_distance_m - previous_point.distance_m) / delta_distance_m
+            return previous_point.altitude_m + ((current_point.altitude_m - previous_point.altitude_m) * ratio)
+        previous_point = current_point
+    return None

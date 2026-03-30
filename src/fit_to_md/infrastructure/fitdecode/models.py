@@ -8,6 +8,8 @@ from datetime import datetime
 class ParsedRecord:
     timestamp: datetime
     distance_m: float | None
+    latitude_deg: float | None
+    longitude_deg: float | None
     heart_rate_bpm: int | None
     cadence_spm: int | None
     fractional_cadence: float | None

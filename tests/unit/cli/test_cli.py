@@ -20,6 +20,26 @@ class StubGenerator:
         return self.markdown
 
 
+class StubElevationProvider:
+    def __init__(self, summary: str) -> None:
+        self._summary = summary
+        self.progress_updates: list[tuple[int, int]] = []
+
+    def usage_summary(self) -> str:
+        return self._summary
+
+    def set_progress_callback(self, callback) -> None:
+        callback(1, 3)
+        callback(2, 3)
+        self.progress_updates.extend([(1, 3), (2, 3)])
+
+
+class StubGeneratorWithElevationUsage(StubGenerator):
+    def __init__(self, markdown: str, summary: str) -> None:
+        super().__init__(markdown)
+        self._extractor = type("Extractor", (), {"_elevation_provider": StubElevationProvider(summary)})()
+
+
 def test_run_writes_markdown_to_stdout(tmp_path: Path) -> None:
     fit_file = tmp_path / "activity.fit"
     fit_file.write_bytes(b"FIT")
@@ -40,6 +60,32 @@ def test_run_writes_markdown_to_stdout(tmp_path: Path) -> None:
     assert generator.calls == [fit_file]
 
 
+def test_run_reports_elevation_api_usage_to_stderr(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    generator = StubGeneratorWithElevationUsage(
+        "# FIT Report\n",
+        "OpenTopoData public API calls this run: 3/1000 (daily usage is not persisted by the CLI).",
+    )
+
+    exit_code = run(
+        argv=[str(fit_file)],
+        report_generator=generator,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    assert stdout.getvalue() == "# FIT Report\n"
+    assert stderr.getvalue() == (
+        "OpenTopoData progress: request 1/3\n"
+        "OpenTopoData progress: request 2/3\n"
+        "OpenTopoData public API calls this run: 3/1000 (daily usage is not persisted by the CLI).\n"
+    )
+
+
 def test_run_returns_error_for_missing_input(tmp_path: Path) -> None:
     missing_file = tmp_path / "missing.fit"
     stdout = io.StringIO()
@@ -57,13 +103,17 @@ def test_run_passes_transition_options_to_default_generator(tmp_path: Path, monk
     fit_file.write_bytes(b"FIT")
     stdout = io.StringIO()
     stderr = io.StringIO()
-    calls: list[tuple[int, str, float, float]] = []
+    calls: list[tuple[int, str, float, float, str, float, str, str]] = []
 
     def fake_build_default_generator(
         dynamics_step_size: int = 15,
         weather_mode: str = "auto",
         elevation_smoothing_distance: float = 170.0,
         elevation_min_change: float = 0.4,
+        elevation_source: str = "fit",
+        dem_sample_distance: float = 30.0,
+        opentopodata_dataset: str = "eudem25m",
+        opentopodata_base_url: str = "https://api.opentopodata.org",
     ) -> StubGenerator:
         calls.append(
             (
@@ -71,6 +121,10 @@ def test_run_passes_transition_options_to_default_generator(tmp_path: Path, monk
                 weather_mode,
                 elevation_smoothing_distance,
                 elevation_min_change,
+                elevation_source,
+                dem_sample_distance,
+                opentopodata_dataset,
+                opentopodata_base_url,
             )
         )
         return StubGenerator("# FIT Report\n")
@@ -88,13 +142,21 @@ def test_run_passes_transition_options_to_default_generator(tmp_path: Path, monk
             "220",
             "--elevation-min-change",
             "0.8",
+            "--elevation-source",
+            "hybrid",
+            "--dem-sample-distance",
+            "25",
+            "--opentopodata-dataset",
+            "copernicus",
+            "--opentopodata-base-url",
+            "https://elevation.internal",
         ],
         stdout=stdout,
         stderr=stderr,
     )
 
     assert exit_code == 0
-    assert calls == [(5, "fit", 220.0, 0.8)]
+    assert calls == [(5, "fit", 220.0, 0.8, "hybrid", 25.0, "copernicus", "https://elevation.internal")]
 
 
 def test_build_default_generator_configures_transition_builder() -> None:
@@ -103,6 +165,10 @@ def test_build_default_generator_configures_transition_builder() -> None:
         weather_mode="auto",
         elevation_smoothing_distance=220.0,
         elevation_min_change=0.8,
+        elevation_source="hybrid",
+        dem_sample_distance=25.0,
+        opentopodata_dataset="copernicus",
+        opentopodata_base_url="https://elevation.internal",
     )
 
     extractor = generator._extractor
@@ -113,6 +179,11 @@ def test_build_default_generator_configures_transition_builder() -> None:
     assert summary_builder._min_elevation_change_m == 0.8
     assert transition_builder._sample_interval_s == 5
     assert isinstance(extractor._weather_provider, OpenMeteoHistoricalWeatherProvider)
+    assert extractor._elevation_provider is not None
+    assert extractor._elevation_mode == "hybrid"
+    assert extractor._elevation_sample_distance_m == 25.0
+    assert extractor._elevation_provider._dataset == "copernicus"
+    assert extractor._elevation_provider._base_url == "https://elevation.internal"
 
 
 def test_run_rejects_invalid_elevation_min_change(tmp_path: Path) -> None:
@@ -129,3 +200,41 @@ def test_run_rejects_invalid_elevation_min_change(tmp_path: Path) -> None:
         )
 
     assert error.value.code == 2
+
+
+def test_run_rejects_invalid_dem_sample_distance(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    with pytest.raises(SystemExit) as error:
+        run(
+            argv=[str(fit_file), "--dem-sample-distance", "0"],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    assert error.value.code == 2
+
+
+def test_run_returns_error_for_runtime_limit_failure(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    class FailingGenerator:
+        def execute(self, source: Path) -> str:
+            raise RuntimeError("OpenTopoData public API limit exceeded")
+
+    exit_code = run(
+        argv=[str(fit_file)],
+        report_generator=FailingGenerator(),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert stdout.getvalue() == ""
+    assert "OpenTopoData public API limit exceeded" in stderr.getvalue()
