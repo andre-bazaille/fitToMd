@@ -17,6 +17,7 @@ FIT_EXPECTATIONS = {
     "2026-03-24-12-20-27.fit": {
         "distance_km": 11.98832,
         "timer_s": 3679.86,
+        "elapsed_s": 3679.86,
         "avg_hr": 140,
         "max_hr": 150,
         "avg_cad": 160,
@@ -29,6 +30,7 @@ FIT_EXPECTATIONS = {
     "2026-03-27-08-13-16.fit": {
         "distance_km": 12.81122,
         "timer_s": 4065.255,
+        "elapsed_s": 4065.255,
         "avg_hr": 140,
         "max_hr": 151,
         "avg_cad": 159,
@@ -41,6 +43,7 @@ FIT_EXPECTATIONS = {
     "2026-03-28-10-24-00.fit": {
         "distance_km": 8.96621,
         "timer_s": 2712.293,
+        "elapsed_s": 2712.293,
         "avg_hr": 146,
         "max_hr": 167,
         "avg_cad": 162,
@@ -49,6 +52,19 @@ FIT_EXPECTATIONS = {
         "descent_m": 404.8,
         "splits": 8,
         "transitions": 8,
+    },
+    "2026-04-10-07-52-08.fit": {
+        "distance_km": 14.07929,
+        "timer_s": 4513.122,
+        "elapsed_s": 5116.335,
+        "avg_hr": 138,
+        "max_hr": 153,
+        "avg_cad": 158,
+        "avg_speed_kmh": 11.230683327417252,
+        "ascent_m": 188.96862745098048,
+        "descent_m": 187.87968514328816,
+        "splits": 14,
+        "transitions": 14,
     },
 }
 
@@ -65,7 +81,7 @@ def test_extractor_decodes_real_fit_files(file_name: str, expected: dict[str, fl
     assert report.summary.activity_type == "Running"
     assert report.summary.total_distance_km == pytest.approx(expected["distance_km"], abs=0.001)
     assert report.summary.total_timer_time_s == pytest.approx(expected["timer_s"], abs=0.01)
-    assert report.summary.total_elapsed_time_s == pytest.approx(expected["timer_s"], abs=0.01)
+    assert report.summary.total_elapsed_time_s == pytest.approx(expected["elapsed_s"], abs=0.01)
     assert report.summary.avg_heart_rate_bpm == expected["avg_hr"]
     assert report.summary.max_heart_rate_bpm == expected["max_hr"]
     assert report.summary.avg_cadence_spm == expected["avg_cad"]
@@ -80,6 +96,13 @@ def test_extractor_decodes_real_fit_files(file_name: str, expected: dict[str, fl
     assert report.transitions[0].label == "Km 1"
     assert report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
     assert report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(report.splits[0].time_seconds, abs=0.1)
+
+
+def test_extractor_excludes_paused_time_from_real_fit_split_and_transition_durations() -> None:
+    report = FitdecodeActivityExtractor().extract(FIXTURE_DIR / "2026-04-10-07-52-08.fit")
+
+    assert report.splits[1].time_seconds == pytest.approx(370.829, abs=0.05)
+    assert report.transitions[1].samples[-1].elapsed_seconds == pytest.approx(370.829, abs=0.05)
 
 
 @pytest.mark.parametrize("file_name", sorted(FIT_EXPECTATIONS))

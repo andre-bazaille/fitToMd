@@ -1,5 +1,7 @@
 ## 2026-03-29
 
+- Excluded paused time from record-derived kilometer splits and per-kilometer heart-rate dynamics by mapping records onto FIT timer start/stop events instead of raw wall-clock timestamps.
+- Added regression coverage for paused activities with both synthetic timer-event fixtures and the new real FIT file fixture.
 - Enforced OpenTopoData public API limits in the elevation adapter, including 100 locations per request, 1 request per second, and a stateless per-run cap of 1000 requests.
 - Added CLI reporting for OpenTopoData request usage at the end of each run without persisting cross-run daily counters.
 - Added OpenTopoData request progress reporting on stderr while DEM batches are being fetched in `dem` and `hybrid` modes.

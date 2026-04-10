@@ -18,6 +18,7 @@ _TRANSITION_GRADE_DISTANCE_M = 200.0
 @dataclass(frozen=True)
 class _BoundaryPoint:
     timestamp: datetime
+    elapsed_time_s: float | None
     altitude_m: float | None
 
 
@@ -123,6 +124,10 @@ class SessionSummaryBuilder:
 
 class SplitBuilder:
     def build(self, activity: ParsedActivityData) -> tuple[Split, ...]:
+        kilometer_laps = _resolve_kilometer_laps(activity.laps, activity.records)
+        if kilometer_laps:
+            return tuple(self._build_from_laps(kilometer_laps))
+
         record_splits = self._build_from_records(activity.records)
         if record_splits:
             return tuple(record_splits)
@@ -135,12 +140,16 @@ class SplitBuilder:
 
         origin_distance_m = distance_records[0].distance_m or 0.0
         final_distance_m = distance_records[-1].distance_m or origin_distance_m
-        completed_kilometers = int(max(0.0, final_distance_m - origin_distance_m) // 1000)
+        completed_kilometers = _count_completed_kilometers(origin_distance_m, final_distance_m)
         if completed_kilometers < 1:
             return []
 
         boundaries: list[_BoundaryPoint] = [
-            _BoundaryPoint(timestamp=distance_records[0].timestamp, altitude_m=distance_records[0].altitude_m)
+            _BoundaryPoint(
+                timestamp=distance_records[0].timestamp,
+                elapsed_time_s=distance_records[0].elapsed_time_s,
+                altitude_m=distance_records[0].altitude_m,
+            )
         ]
         splits: list[Split] = []
 
@@ -151,13 +160,13 @@ class SplitBuilder:
                 break
 
             previous_boundary = boundaries[-1]
-            window_records = [
-                record
-                for record in records
-                if previous_boundary.timestamp < record.timestamp <= crossing.timestamp
-            ]
+            window_records = _select_records_in_boundary_window(
+                records=records,
+                start_boundary=previous_boundary,
+                end_boundary=crossing,
+            )
 
-            split_time_s = (crossing.timestamp - previous_boundary.timestamp).total_seconds()
+            split_time_s = _resolve_boundary_duration_s(previous_boundary, crossing)
             elevation_delta_m = None
             if previous_boundary.altitude_m is not None and crossing.altitude_m is not None:
                 elevation_delta_m = crossing.altitude_m - previous_boundary.altitude_m
@@ -228,16 +237,27 @@ class TransitionBuilder:
 
         origin_distance_m = distance_records[0].distance_m or 0.0
         final_distance_m = distance_records[-1].distance_m or origin_distance_m
-        completed_kilometers = int(max(0.0, final_distance_m - origin_distance_m) // 1000)
+        completed_kilometers = _count_completed_kilometers(origin_distance_m, final_distance_m)
         if completed_kilometers < 1:
             return tuple()
+
+        kilometer_laps = _resolve_kilometer_laps(activity.laps, activity.records)
+        kilometer_lap_durations = tuple(
+            lap.total_timer_time_s for lap in kilometer_laps if lap.total_timer_time_s is not None
+        )
+        use_kilometer_lap_durations = len(kilometer_lap_durations) == completed_kilometers
+        cumulative_elapsed_time_s = 0.0
 
         smoothed_altitude_profile = _build_smoothed_altitude_profile(
             activity.records,
             elevation_smoothing_distance_m=self._elevation_smoothing_distance_m,
         )
         boundaries: list[_BoundaryPoint] = [
-            _BoundaryPoint(timestamp=distance_records[0].timestamp, altitude_m=distance_records[0].altitude_m)
+            _BoundaryPoint(
+                timestamp=distance_records[0].timestamp,
+                elapsed_time_s=distance_records[0].elapsed_time_s,
+                altitude_m=distance_records[0].altitude_m,
+            )
         ]
         transitions: list[TransitionDynamics] = []
         for kilometer in range(1, completed_kilometers + 1):
@@ -247,15 +267,27 @@ class TransitionBuilder:
                 continue
 
             start_boundary = boundaries[-1]
-            duration_s = (end_boundary.timestamp - start_boundary.timestamp).total_seconds()
+            if use_kilometer_lap_durations:
+                duration_s = kilometer_lap_durations[kilometer - 1]
+            else:
+                duration_s = _resolve_boundary_duration_s(start_boundary, end_boundary)
             if duration_s <= 0:
                 boundaries.append(end_boundary)
                 continue
 
             samples: list[TransitionSample] = []
             for elapsed_seconds in _build_elapsed_samples(duration_s, self._sample_interval_s):
-                target_time = start_boundary.timestamp + timedelta(seconds=elapsed_seconds)
-                record = _interpolate_record_at_time(activity.records, target_time)
+                if use_kilometer_lap_durations:
+                    record = _interpolate_record_at_elapsed_time(
+                        activity.records,
+                        cumulative_elapsed_time_s + elapsed_seconds,
+                    )
+                else:
+                    record = _interpolate_record_within_boundary_window(
+                        records=activity.records,
+                        start_boundary=start_boundary,
+                        elapsed_seconds=elapsed_seconds,
+                    )
                 if record is None:
                     continue
 
@@ -284,8 +316,44 @@ class TransitionBuilder:
                     )
                 )
             boundaries.append(end_boundary)
+            if use_kilometer_lap_durations:
+                cumulative_elapsed_time_s += duration_s
 
         return tuple(transitions)
+
+
+def _resolve_kilometer_laps(
+    laps: tuple[ParsedLap, ...],
+    records: tuple[ParsedRecord, ...],
+) -> tuple[ParsedLap, ...]:
+    if not laps:
+        return tuple()
+
+    kilometer_laps = tuple(lap for lap in laps if _is_kilometer_lap(lap))
+    if not kilometer_laps:
+        return tuple()
+
+    distance_records = [record for record in records if record.distance_m is not None]
+    if len(distance_records) < 2:
+        return kilometer_laps
+
+    origin_distance_m = distance_records[0].distance_m or 0.0
+    final_distance_m = distance_records[-1].distance_m or origin_distance_m
+    completed_kilometers = _count_completed_kilometers(origin_distance_m, final_distance_m)
+    if completed_kilometers < 1 or len(kilometer_laps) < completed_kilometers:
+        return tuple()
+
+    return kilometer_laps[:completed_kilometers]
+
+
+def _is_kilometer_lap(lap: ParsedLap) -> bool:
+    if lap.total_timer_time_s is None or lap.total_distance_m is None:
+        return False
+    return abs(lap.total_distance_m - 1000.0) <= 25.0
+
+
+def _count_completed_kilometers(origin_distance_m: float, final_distance_m: float) -> int:
+    return int(max(0.0, final_distance_m - origin_distance_m) // 1000)
 
 
 def _resolve_activity_type(activity: ParsedActivityData) -> str | None:
@@ -307,6 +375,9 @@ def _derive_total_distance_from_records(records: tuple[ParsedRecord, ...]) -> fl
 
 
 def _derive_timer_time_from_records(records: tuple[ParsedRecord, ...]) -> float | None:
+    elapsed_times = [record.elapsed_time_s for record in records if record.elapsed_time_s is not None]
+    if len(elapsed_times) >= 2:
+        return max(elapsed_times) - min(elapsed_times)
     if len(records) < 2:
         return None
     return (records[-1].timestamp - records[0].timestamp).total_seconds()
@@ -520,7 +591,16 @@ def _interpolate_record_at_distance(records: list[ParsedRecord], target_distance
             ratio = (target_distance_m - lower_distance) / (upper_distance - lower_distance)
             timestamp = previous_record.timestamp + (current_record.timestamp - previous_record.timestamp) * ratio
             altitude_m = _interpolate_float(previous_record.altitude_m, current_record.altitude_m, ratio)
-            return _BoundaryPoint(timestamp=timestamp, altitude_m=altitude_m)
+            elapsed_time_s = _interpolate_float(
+                previous_record.elapsed_time_s,
+                current_record.elapsed_time_s,
+                ratio,
+            )
+            return _BoundaryPoint(
+                timestamp=timestamp,
+                elapsed_time_s=elapsed_time_s,
+                altitude_m=altitude_m,
+            )
 
         previous_record = current_record
 
@@ -545,6 +625,11 @@ def _interpolate_record_at_time(records: tuple[ParsedRecord, ...], target_time: 
             ratio = (target_time - previous_record.timestamp).total_seconds() / interval_s
             return ParsedRecord(
                 timestamp=target_time,
+                elapsed_time_s=_interpolate_float(
+                    previous_record.elapsed_time_s,
+                    current_record.elapsed_time_s,
+                    ratio,
+                ),
                 distance_m=_interpolate_float(previous_record.distance_m, current_record.distance_m, ratio),
                 latitude_deg=_interpolate_float(previous_record.latitude_deg, current_record.latitude_deg, ratio),
                 longitude_deg=_interpolate_float(previous_record.longitude_deg, current_record.longitude_deg, ratio),
@@ -563,6 +648,98 @@ def _interpolate_record_at_time(records: tuple[ParsedRecord, ...], target_time: 
         previous_record = current_record
 
     return None
+
+
+def _interpolate_record_at_elapsed_time(
+    records: tuple[ParsedRecord, ...],
+    target_elapsed_time_s: float,
+) -> ParsedRecord | None:
+    elapsed_records = [record for record in records if record.elapsed_time_s is not None]
+    if not elapsed_records:
+        return None
+    if target_elapsed_time_s < elapsed_records[0].elapsed_time_s or target_elapsed_time_s > elapsed_records[-1].elapsed_time_s:
+        return None
+    if target_elapsed_time_s == elapsed_records[0].elapsed_time_s:
+        return elapsed_records[0]
+
+    previous_record = elapsed_records[0]
+    for current_record in elapsed_records[1:]:
+        current_elapsed_time_s = current_record.elapsed_time_s
+        previous_elapsed_time_s = previous_record.elapsed_time_s
+        if current_elapsed_time_s is None or previous_elapsed_time_s is None:
+            previous_record = current_record
+            continue
+
+        if target_elapsed_time_s == current_elapsed_time_s:
+            return current_record
+        if previous_elapsed_time_s <= target_elapsed_time_s <= current_elapsed_time_s:
+            interval_s = current_elapsed_time_s - previous_elapsed_time_s
+            if interval_s == 0:
+                previous_record = current_record
+                continue
+            ratio = (target_elapsed_time_s - previous_elapsed_time_s) / interval_s
+            return ParsedRecord(
+                timestamp=previous_record.timestamp + (current_record.timestamp - previous_record.timestamp) * ratio,
+                elapsed_time_s=target_elapsed_time_s,
+                distance_m=_interpolate_float(previous_record.distance_m, current_record.distance_m, ratio),
+                latitude_deg=_interpolate_float(previous_record.latitude_deg, current_record.latitude_deg, ratio),
+                longitude_deg=_interpolate_float(previous_record.longitude_deg, current_record.longitude_deg, ratio),
+                heart_rate_bpm=_interpolate_int(previous_record.heart_rate_bpm, current_record.heart_rate_bpm, ratio),
+                cadence_spm=_interpolate_int(previous_record.cadence_spm, current_record.cadence_spm, ratio),
+                fractional_cadence=_interpolate_float(
+                    previous_record.fractional_cadence,
+                    current_record.fractional_cadence,
+                    ratio,
+                ),
+                speed_mps=_interpolate_float(previous_record.speed_mps, current_record.speed_mps, ratio),
+                altitude_m=_interpolate_float(previous_record.altitude_m, current_record.altitude_m, ratio),
+                grade_percent=_interpolate_float(previous_record.grade_percent, current_record.grade_percent, ratio),
+                temperature_c=_interpolate_float(previous_record.temperature_c, current_record.temperature_c, ratio),
+            )
+        previous_record = current_record
+
+    return None
+
+
+def _resolve_boundary_duration_s(start_boundary: _BoundaryPoint, end_boundary: _BoundaryPoint) -> float:
+    if start_boundary.elapsed_time_s is not None and end_boundary.elapsed_time_s is not None:
+        return end_boundary.elapsed_time_s - start_boundary.elapsed_time_s
+    return (end_boundary.timestamp - start_boundary.timestamp).total_seconds()
+
+
+def _select_records_in_boundary_window(
+    records: tuple[ParsedRecord, ...],
+    start_boundary: _BoundaryPoint,
+    end_boundary: _BoundaryPoint,
+) -> list[ParsedRecord]:
+    if start_boundary.elapsed_time_s is not None and end_boundary.elapsed_time_s is not None:
+        return [
+            record
+            for record in records
+            if record.elapsed_time_s is not None
+            and start_boundary.elapsed_time_s < record.elapsed_time_s <= end_boundary.elapsed_time_s
+        ]
+
+    return [
+        record
+        for record in records
+        if start_boundary.timestamp < record.timestamp <= end_boundary.timestamp
+    ]
+
+
+def _interpolate_record_within_boundary_window(
+    records: tuple[ParsedRecord, ...],
+    start_boundary: _BoundaryPoint,
+    elapsed_seconds: float,
+) -> ParsedRecord | None:
+    if start_boundary.elapsed_time_s is not None:
+        return _interpolate_record_at_elapsed_time(
+            records,
+            start_boundary.elapsed_time_s + elapsed_seconds,
+        )
+
+    target_time = start_boundary.timestamp + timedelta(seconds=elapsed_seconds)
+    return _interpolate_record_at_time(records, target_time)
 
 
 def _build_elapsed_samples(duration_s: float, sample_interval_s: int) -> list[float]:

@@ -162,6 +162,128 @@ def test_extractor_builds_kilometer_transitions_without_laps() -> None:
     assert report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(300.0)
 
 
+def test_extractor_excludes_paused_time_from_record_splits_and_transitions() -> None:
+    start = datetime(2026, 4, 10, 6, 0, 0)
+    frames = [
+        FakeFrame(
+            "session",
+            {
+                "start_time": start,
+                "timestamp": start + timedelta(seconds=570),
+                "total_distance": 2000.0,
+                "total_timer_time": 450.0,
+                "total_elapsed_time": 570.0,
+            },
+        ),
+        FakeFrame(
+            "event",
+            {
+                "timestamp": start,
+                "event": "timer",
+                "event_type": "start",
+            },
+        ),
+        FakeFrame(
+            "event",
+            {
+                "timestamp": start + timedelta(seconds=330),
+                "event": "timer",
+                "event_type": "stop_all",
+            },
+        ),
+        FakeFrame(
+            "event",
+            {
+                "timestamp": start + timedelta(seconds=450),
+                "event": "timer",
+                "event_type": "start",
+            },
+        ),
+        FakeFrame(
+            "event",
+            {
+                "timestamp": start + timedelta(seconds=570),
+                "event": "timer",
+                "event_type": "stop_all",
+            },
+        ),
+        FakeFrame(
+            "record",
+            {
+                "timestamp": start,
+                "distance": 0.0,
+                "heart_rate": 120,
+                "cadence": 80,
+                "fractional_cadence": 0.0,
+                "enhanced_speed": 3.0,
+                "enhanced_altitude": 10.0,
+            },
+        ),
+        FakeFrame(
+            "record",
+            {
+                "timestamp": start + timedelta(seconds=300),
+                "distance": 1000.0,
+                "heart_rate": 130,
+                "cadence": 81,
+                "fractional_cadence": 0.0,
+                "enhanced_speed": 3.0,
+                "enhanced_altitude": 20.0,
+            },
+        ),
+        FakeFrame(
+            "record",
+            {
+                "timestamp": start + timedelta(seconds=330),
+                "distance": 1100.0,
+                "heart_rate": 135,
+                "cadence": 82,
+                "fractional_cadence": 0.0,
+                "enhanced_speed": 3.0,
+                "enhanced_altitude": 22.0,
+            },
+        ),
+        FakeFrame(
+            "record",
+            {
+                "timestamp": start + timedelta(seconds=450),
+                "distance": 1100.0,
+                "heart_rate": 90,
+                "cadence": 70,
+                "fractional_cadence": 0.0,
+                "enhanced_speed": 0.0,
+                "enhanced_altitude": 22.0,
+            },
+        ),
+        FakeFrame(
+            "record",
+            {
+                "timestamp": start + timedelta(seconds=570),
+                "distance": 2000.0,
+                "heart_rate": 150,
+                "cadence": 84,
+                "fractional_cadence": 0.0,
+                "enhanced_speed": 3.75,
+                "enhanced_altitude": 30.0,
+            },
+        ),
+    ]
+
+    extractor = FitdecodeActivityExtractor(
+        reader_factory=lambda _: FakeReader(frames),
+        transition_builder=TransitionBuilder(sample_interval_s=60),
+    )
+
+    report = extractor.extract(Path("activity.fit"))
+
+    assert report.summary.total_timer_time_s == pytest.approx(450.0)
+    assert report.summary.total_elapsed_time_s == pytest.approx(570.0)
+    assert len(report.splits) == 2
+    assert report.splits[0].time_seconds == pytest.approx(300.0)
+    assert report.splits[1].time_seconds == pytest.approx(150.0)
+    assert [sample.elapsed_seconds for sample in report.transitions[1].samples] == [0.0, 60.0, 120.0, 150.0]
+
+
 def test_extractor_falls_back_to_lap_splits_when_record_distances_missing() -> None:
     start = datetime(2026, 3, 29, 7, 0, 0)
     frames = [

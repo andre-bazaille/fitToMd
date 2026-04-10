@@ -51,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--transition-sample-interval",
         dest="dynamics_step_size",
         type=_positive_int,
-        default=15,
+        default=30,
         help="Sampling interval in seconds for per-kilometer dynamics output.",
     )
     parser.add_argument("--transition-window", type=_positive_int, default=60, help=argparse.SUPPRESS)

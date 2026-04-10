@@ -7,6 +7,7 @@ from datetime import datetime
 @dataclass(frozen=True)
 class ParsedRecord:
     timestamp: datetime
+    elapsed_time_s: float | None
     distance_m: float | None
     latitude_deg: float | None
     longitude_deg: float | None

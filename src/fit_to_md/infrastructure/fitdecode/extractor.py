@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -24,6 +24,22 @@ class _DistanceCoordinatePoint:
 class _DistanceElevationPoint:
     distance_m: float
     altitude_m: float
+
+
+@dataclass(frozen=True)
+class _TimerEvent:
+    timestamp: datetime
+    event_type: str
+
+
+@dataclass(frozen=True)
+class _TimerInterval:
+    start_time: datetime
+    end_time: datetime
+
+
+_TIMER_START_EVENT_TYPES = {"start"}
+_TIMER_STOP_EVENT_TYPES = {"stop", "stop_all", "stop_disable", "stop_disable_all"}
 
 
 class FitdecodeActivityExtractor:
@@ -110,6 +126,7 @@ class FitdecodeActivityExtractor:
         device_infos: list[dict[str, object]] = []
         laps: list[ParsedLap] = []
         records: list[ParsedRecord] = []
+        timer_events: list[_TimerEvent] = []
         sport: str | None = None
         sub_sport: str | None = None
 
@@ -132,13 +149,19 @@ class FitdecodeActivityExtractor:
                     record = _parse_record(frame)
                     if record is not None:
                         records.append(record)
+                elif frame.name == "event":
+                    timer_event = _parse_timer_event(frame)
+                    if timer_event is not None:
+                        timer_events.append(timer_event)
 
-        normalized_records = tuple(
-            _normalize_running_record_cadence(
-                records,
+        normalized_records = _normalize_running_record_cadence(
+            records,
                 sport=sport,
                 session_data=session_data,
             )
+        records_with_elapsed = _assign_elapsed_time_to_records(
+            records=normalized_records,
+            timer_events=tuple(timer_events),
         )
         return ParsedActivityData(
             session_data=session_data,
@@ -146,7 +169,7 @@ class FitdecodeActivityExtractor:
             sport=sport,
             sub_sport=sub_sport,
             laps=tuple(laps),
-            records=normalized_records,
+            records=records_with_elapsed,
         )
 
 
@@ -177,6 +200,7 @@ def _parse_record(frame: Any) -> ParsedRecord | None:
 
     record = ParsedRecord(
         timestamp=timestamp,
+        elapsed_time_s=None,
         distance_m=_coerce_float(values.get("distance")),
         latitude_deg=_semicircles_to_degrees(values.get("position_lat")),
         longitude_deg=_semicircles_to_degrees(values.get("position_long")),
@@ -202,6 +226,19 @@ def _parse_record(frame: Any) -> ParsedRecord | None:
     ):
         return None
     return record
+
+
+def _parse_timer_event(frame: Any) -> _TimerEvent | None:
+    values = _extract_message_values(frame)
+    if _coerce_text(values.get("event")) != "timer":
+        return None
+
+    timestamp = _coerce_datetime(values.get("timestamp"))
+    event_type = _coerce_text(values.get("event_type"))
+    if timestamp is None or event_type is None:
+        return None
+
+    return _TimerEvent(timestamp=timestamp, event_type=event_type)
 
 
 def _extract_message_values(frame: Any) -> dict[str, object]:
@@ -233,6 +270,7 @@ def _normalize_running_record_cadence(
         normalized_records.append(
             ParsedRecord(
                 timestamp=record.timestamp,
+                elapsed_time_s=record.elapsed_time_s,
                 distance_m=record.distance_m,
                 latitude_deg=record.latitude_deg,
                 longitude_deg=record.longitude_deg,
@@ -246,6 +284,102 @@ def _normalize_running_record_cadence(
             )
         )
     return normalized_records
+
+
+def _assign_elapsed_time_to_records(
+    records: list[ParsedRecord],
+    timer_events: tuple[_TimerEvent, ...],
+) -> tuple[ParsedRecord, ...]:
+    if not records:
+        return tuple()
+
+    origin_time = records[0].timestamp
+    intervals = _build_timer_intervals(
+        timer_events=timer_events,
+        fallback_start_time=origin_time,
+        fallback_end_time=records[-1].timestamp,
+    )
+    if not intervals:
+        return tuple(
+            replace(record, elapsed_time_s=(record.timestamp - origin_time).total_seconds())
+            for record in records
+        )
+
+    return tuple(
+        replace(record, elapsed_time_s=_elapsed_time_at_timestamp(record.timestamp, intervals))
+        for record in records
+    )
+
+
+def _build_timer_intervals(
+    timer_events: tuple[_TimerEvent, ...],
+    fallback_start_time: datetime,
+    fallback_end_time: datetime,
+) -> tuple[_TimerInterval, ...]:
+    if not timer_events:
+        return tuple()
+
+    intervals: list[_TimerInterval] = []
+    current_start: datetime | None = None
+    saw_timer_state = False
+    for timer_event in sorted(timer_events, key=lambda event: event.timestamp):
+        if timer_event.event_type in _TIMER_START_EVENT_TYPES:
+            saw_timer_state = True
+            if current_start is None:
+                current_start = max(timer_event.timestamp, fallback_start_time)
+        elif timer_event.event_type in _TIMER_STOP_EVENT_TYPES:
+            saw_timer_state = True
+            stop_time = min(timer_event.timestamp, fallback_end_time)
+            if current_start is None:
+                if not intervals and stop_time > fallback_start_time:
+                    intervals.append(
+                        _TimerInterval(
+                            start_time=fallback_start_time,
+                            end_time=stop_time,
+                        )
+                    )
+                continue
+
+            if stop_time >= current_start:
+                intervals.append(
+                    _TimerInterval(
+                        start_time=current_start,
+                        end_time=stop_time,
+                    )
+                )
+            current_start = None
+
+    if not saw_timer_state:
+        return tuple()
+
+    if current_start is not None and fallback_end_time >= current_start:
+        intervals.append(
+            _TimerInterval(
+                start_time=current_start,
+                end_time=fallback_end_time,
+            )
+        )
+
+    return tuple(intervals)
+
+
+def _elapsed_time_at_timestamp(
+    timestamp: datetime,
+    intervals: tuple[_TimerInterval, ...],
+) -> float:
+    elapsed_time_s = 0.0
+    for interval in intervals:
+        interval_duration_s = (interval.end_time - interval.start_time).total_seconds()
+        if timestamp >= interval.end_time:
+            elapsed_time_s += interval_duration_s
+            continue
+        if timestamp <= interval.start_time:
+            break
+
+        elapsed_time_s += (timestamp - interval.start_time).total_seconds()
+        break
+
+    return elapsed_time_s
 def _resolve_lap_cadence(values: dict[str, object]) -> int | None:
     running_cadence = _coerce_int(values.get("avg_running_cadence"))
     if running_cadence is not None:
@@ -359,6 +493,7 @@ def _replace_record_altitudes_from_dem(
         enriched_records.append(
             ParsedRecord(
                 timestamp=record.timestamp,
+                elapsed_time_s=record.elapsed_time_s,
                 distance_m=record.distance_m,
                 latitude_deg=record.latitude_deg,
                 longitude_deg=record.longitude_deg,

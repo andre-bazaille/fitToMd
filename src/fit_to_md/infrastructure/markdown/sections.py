@@ -203,7 +203,7 @@ def _format_duration(value: float | None) -> str:
     if value is None:
         return "-"
 
-    total_seconds = int(round(value))
+    total_seconds = int(value)
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
 
