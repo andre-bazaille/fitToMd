@@ -124,10 +124,12 @@ def test_renderer_generates_markdown_for_real_fit_files(file_name: str) -> None:
     assert "0:00:" in markdown
 
 
-def test_cli_uses_real_fit_file_and_respects_transition_options() -> None:
-    fit_file = FIXTURE_DIR / "2026-03-24-12-20-27.fit"
+def test_cli_uses_real_fit_file_and_respects_transition_options(tmp_path: Path) -> None:
+    fit_file = tmp_path / "2026-03-24-12-20-27.fit"
+    fit_file.write_bytes((FIXTURE_DIR / "2026-03-24-12-20-27.fit").read_bytes())
     stdout = io.StringIO()
     stderr = io.StringIO()
+    output_file = tmp_path / "2026-03-24-12-20-27.md"
 
     exit_code = run(
         argv=[
@@ -141,10 +143,12 @@ def test_cli_uses_real_fit_file_and_respects_transition_options() -> None:
         stderr=stderr,
     )
 
-    output = stdout.getvalue()
+    output = output_file.read_text(encoding="utf-8")
+    stdout_output = stdout.getvalue()
     error_output = stderr.getvalue()
 
     assert exit_code == 0
+    assert stdout_output == output
     assert "OpenTopoData progress: request" in error_output
     assert "OpenTopoData public API calls this run:" in error_output
     assert "# FIT Report: 2026-03-24 Running" in output

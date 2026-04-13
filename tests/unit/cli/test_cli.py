@@ -40,12 +40,13 @@ class StubGeneratorWithElevationUsage(StubGenerator):
         self._extractor = type("Extractor", (), {"_elevation_provider": StubElevationProvider(summary)})()
 
 
-def test_run_writes_markdown_to_stdout(tmp_path: Path) -> None:
+def test_run_writes_markdown_to_default_output_file(tmp_path: Path) -> None:
     fit_file = tmp_path / "activity.fit"
     fit_file.write_bytes(b"FIT")
     stdout = io.StringIO()
     stderr = io.StringIO()
     generator = StubGenerator("# FIT Report\n")
+    expected_output = tmp_path / "activity.md"
 
     exit_code = run(
         argv=[str(fit_file)],
@@ -58,6 +59,7 @@ def test_run_writes_markdown_to_stdout(tmp_path: Path) -> None:
     assert stdout.getvalue() == "# FIT Report\n"
     assert stderr.getvalue() == ""
     assert generator.calls == [fit_file]
+    assert expected_output.read_text(encoding="utf-8") == "# FIT Report\n"
 
 
 def test_run_reports_elevation_api_usage_to_stderr(tmp_path: Path) -> None:
@@ -65,6 +67,7 @@ def test_run_reports_elevation_api_usage_to_stderr(tmp_path: Path) -> None:
     fit_file.write_bytes(b"FIT")
     stdout = io.StringIO()
     stderr = io.StringIO()
+    expected_output = tmp_path / "activity.md"
     generator = StubGeneratorWithElevationUsage(
         "# FIT Report\n",
         "OpenTopoData public API calls this run: 3/1000 (daily usage is not persisted by the CLI).",
@@ -79,6 +82,7 @@ def test_run_reports_elevation_api_usage_to_stderr(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert stdout.getvalue() == "# FIT Report\n"
+    assert expected_output.read_text(encoding="utf-8") == "# FIT Report\n"
     assert stderr.getvalue() == (
         "OpenTopoData progress: request 1/3\n"
         "OpenTopoData progress: request 2/3\n"

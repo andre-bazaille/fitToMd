@@ -1,3 +1,7 @@
+## 2026-04-13
+
+- Changed the CLI default output behavior so omitting `--output` now writes a Markdown file next to the FIT input, using the same base name with a `.md` suffix, while still echoing the report to stdout.
+
 ## 2026-03-29
 
 - Excluded paused time from record-derived kilometer splits and per-kilometer heart-rate dynamics by mapping records onto FIT timer start/stop events instead of raw wall-clock timestamps.

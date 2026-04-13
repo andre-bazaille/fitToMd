@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-o",
         "--output",
         type=Path,
-        help="Optional path for the generated Markdown file.",
+        help="Optional path for the generated Markdown file; defaults to the input file with a .md suffix.",
     )
     parser.add_argument(
         "--dynamics-step-size",
@@ -151,6 +151,8 @@ def run(
         print(f"Input file not found: {input_path}", file=stderr)
         return 2
 
+    output_path = args.output or input_path.with_suffix(".md")
+
     generator = report_generator or build_default_generator(
         dynamics_step_size=args.dynamics_step_size,
         weather_mode=args.weather_mode,
@@ -169,14 +171,10 @@ def run(
         print(str(error), file=stderr)
         return 1
 
-    if args.output is None:
-        stdout.write(markdown)
-        if not markdown.endswith("\n"):
-            stdout.write("\n")
-        _write_elevation_usage_summary(generator, stderr)
-        return 0
-
-    args.output.write_text(markdown, encoding="utf-8")
+    output_path.write_text(markdown, encoding="utf-8")
+    stdout.write(markdown)
+    if not markdown.endswith("\n"):
+        stdout.write("\n")
     _write_elevation_usage_summary(generator, stderr)
     return 0
 
