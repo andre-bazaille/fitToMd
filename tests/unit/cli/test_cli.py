@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import fit_to_md.cli as cli
-from fit_to_md.cli import build_default_generator, run
+from fit_to_md.cli import build_default_generator, build_parser, run
 from fit_to_md.infrastructure.weather import OpenMeteoHistoricalWeatherProvider
 
 
@@ -102,6 +102,96 @@ def test_run_returns_error_for_missing_input(tmp_path: Path) -> None:
     assert "Input file not found" in stderr.getvalue()
 
 
+def test_run_returns_error_when_input_is_not_a_file(tmp_path: Path) -> None:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(argv=[str(tmp_path)], stdout=stdout, stderr=stderr)
+
+    assert exit_code == 2
+    assert stdout.getvalue() == ""
+    assert "Input path is not a file" in stderr.getvalue()
+
+
+def test_run_returns_friendly_error_for_invalid_fit_file(tmp_path: Path) -> None:
+    fit_file = tmp_path / "invalid.fit"
+    fit_file.write_bytes(b"not a FIT file")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(argv=[str(fit_file)], stdout=stdout, stderr=stderr)
+
+    assert exit_code == 1
+    assert stdout.getvalue() == ""
+    assert "Invalid FIT file" in stderr.getvalue()
+    assert not fit_file.with_suffix(".md").exists()
+
+
+def test_run_returns_friendly_error_when_input_cannot_be_read(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    class UnreadableGenerator:
+        def execute(self, source: Path) -> str:
+            raise PermissionError("permission denied")
+
+    exit_code = run(
+        argv=[str(fit_file)],
+        report_generator=UnreadableGenerator(),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert stdout.getvalue() == ""
+    assert "Unable to read input file" in stderr.getvalue()
+
+
+def test_run_returns_friendly_error_when_output_cannot_be_written(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    output_directory = tmp_path / "report-directory"
+    output_directory.mkdir()
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(fit_file), "--output", str(output_directory)],
+        report_generator=StubGenerator("# FIT Report\n"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert stdout.getvalue() == ""
+    assert "Unable to write Markdown report" in stderr.getvalue()
+
+
+def test_parser_rejects_removed_transition_window_option() -> None:
+    with pytest.raises(SystemExit) as error:
+        build_parser().parse_args(["activity.fit", "--transition-window", "60"])
+
+    assert error.value.code == 2
+
+
+def test_default_configuration_does_not_enable_external_providers() -> None:
+    args = build_parser().parse_args(["activity.fit"])
+    generator = build_default_generator()
+    extractor = generator._extractor
+
+    assert args.weather_mode == "fit"
+    assert args.elevation_source == "fit"
+    assert args.dynamics_step_size == 30
+    assert args.dem_sample_distance == 25.0
+    assert extractor._weather_provider is None
+    assert extractor._elevation_provider is None
+    assert extractor._elevation_mode == "fit"
+    assert extractor._transition_builder._sample_interval_s == 30
+    assert extractor._elevation_sample_distance_m == 25.0
+
+
 def test_run_passes_transition_options_to_default_generator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fit_file = tmp_path / "activity.fit"
     fit_file.write_bytes(b"FIT")
@@ -110,12 +200,12 @@ def test_run_passes_transition_options_to_default_generator(tmp_path: Path, monk
     calls: list[tuple[int, str, float, float, str, float, str, str]] = []
 
     def fake_build_default_generator(
-        dynamics_step_size: int = 15,
-        weather_mode: str = "auto",
+        dynamics_step_size: int = 30,
+        weather_mode: str = "fit",
         elevation_smoothing_distance: float = 170.0,
         elevation_min_change: float = 0.4,
         elevation_source: str = "fit",
-        dem_sample_distance: float = 30.0,
+        dem_sample_distance: float = 25.0,
         opentopodata_dataset: str = "eudem25m",
         opentopodata_base_url: str = "https://api.opentopodata.org",
     ) -> StubGenerator:

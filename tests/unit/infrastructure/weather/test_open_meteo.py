@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from fit_to_md.infrastructure.weather.open_meteo import OpenMeteoHistoricalWeatherProvider
 
@@ -40,8 +40,8 @@ def test_open_meteo_provider_parses_hourly_weather() -> None:
     provider = OpenMeteoHistoricalWeatherProvider(urlopen_fn=fake_urlopen)
 
     weather = provider.lookup(
-        start_time=datetime(2026, 3, 24, 11, 20, tzinfo=UTC),
-        end_time=datetime(2026, 3, 24, 12, 21, tzinfo=UTC),
+        start_time=datetime(2026, 3, 24, 11, 20, tzinfo=timezone.utc),
+        end_time=datetime(2026, 3, 24, 12, 21, tzinfo=timezone.utc),
         latitude_deg=48.877191,
         longitude_deg=2.293044,
     )

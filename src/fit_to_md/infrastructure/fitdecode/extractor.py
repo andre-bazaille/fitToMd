@@ -69,13 +69,17 @@ class FitdecodeActivityExtractor:
         self._elevation_sample_distance_m = elevation_sample_distance_m
 
     def extract(self, source: Path) -> FitReport:
-        activity = self._parse_activity(source)
-        activity = self._enrich_activity_elevation(activity)
+        parsed_activity = self._parse_activity(source)
+        activity = self._enrich_activity_elevation(parsed_activity)
+        elevation_was_enriched = activity is not parsed_activity
         summary = self._summary_builder.build(activity)
         summary = self._enrich_summary_weather(summary, activity)
         return FitReport(
             summary=summary,
-            splits=self._split_builder.build(activity),
+            splits=self._split_builder.build(
+                activity,
+                prefer_records=elevation_was_enriched,
+            ),
             transitions=self._transition_builder.build(activity),
         )
 

@@ -1,3 +1,13 @@
+## 2026-08-27
+
+- Restored Python 3.9 and 3.10 compatibility by replacing `datetime.UTC` with `timezone.utc`.
+- Made external weather and DEM enrichment opt-in so the default CLI execution keeps activity location data local.
+- Aligned programmatic generator defaults with the CLI defaults.
+- Made DEM-corrected reports derive split elevation from enriched records instead of retaining FIT-native lap elevation.
+- Added regression coverage for offline defaults and DEM elevation consistency when kilometer laps are present.
+- Removed the obsolete `--transition-window` option and aligned the dynamics documentation with per-kilometer sampling.
+- Added friendly CLI errors for directory inputs, invalid FIT data, input read failures, and Markdown write failures.
+
 ## 2026-04-13
 
 - Changed the CLI default output behavior so omitting `--output` now writes a Markdown file next to the FIT input, using the same base name with a `.md` suffix, while still echoing the report to stdout.

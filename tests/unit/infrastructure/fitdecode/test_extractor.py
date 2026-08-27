@@ -740,6 +740,20 @@ def test_extractor_replaces_fit_altitude_with_dem_samples() -> None:
                 "total_distance": 1000.0,
             },
         ),
+        FakeFrame(
+            "lap",
+            {
+                "start_time": start,
+                "timestamp": start + timedelta(seconds=100),
+                "total_distance": 1000.0,
+                "total_timer_time": 100.0,
+                "total_ascent": 500.0,
+                "total_descent": 0.0,
+                "avg_heart_rate": 125,
+                "max_heart_rate": 130,
+                "avg_cadence": 80,
+            },
+        ),
     ]
 
     for index in range(11):
@@ -784,6 +798,7 @@ def test_extractor_replaces_fit_altitude_with_dem_samples() -> None:
     assert len(elevation_provider.calls[0]) == 5
     assert report.summary.total_ascent_m == pytest.approx(10.0, abs=1.0)
     assert report.summary.total_descent_m == pytest.approx(0.0, abs=0.5)
+    assert report.splits[0].elevation_delta_m == pytest.approx(10.0, abs=0.1)
     assert report.transitions[0].samples[-1].grade_percent == pytest.approx(0.75, abs=0.1)
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from statistics import mean
 from typing import Any, Callable
 from urllib.parse import urlencode
@@ -124,8 +124,8 @@ class OpenMeteoHistoricalWeatherProvider:
 
 def _normalize_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _parse_samples(payload: dict[str, Any]) -> list[_HourlyWeatherSample]:
@@ -148,7 +148,7 @@ def _parse_samples(payload: dict[str, Any]) -> list[_HourlyWeatherSample]:
         if not isinstance(raw_time, str):
             continue
         try:
-            timestamp = datetime.fromisoformat(raw_time).replace(tzinfo=UTC)
+            timestamp = datetime.fromisoformat(raw_time).replace(tzinfo=timezone.utc)
         except ValueError:
             continue
         samples.append(

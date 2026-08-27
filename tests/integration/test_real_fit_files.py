@@ -124,7 +124,7 @@ def test_renderer_generates_markdown_for_real_fit_files(file_name: str) -> None:
     assert "0:00:" in markdown
 
 
-def test_cli_uses_real_fit_file_and_respects_transition_options(tmp_path: Path) -> None:
+def test_cli_uses_real_fit_file_without_external_network_by_default(tmp_path: Path) -> None:
     fit_file = tmp_path / "2026-03-24-12-20-27.fit"
     fit_file.write_bytes((FIXTURE_DIR / "2026-03-24-12-20-27.fit").read_bytes())
     stdout = io.StringIO()
@@ -136,8 +136,6 @@ def test_cli_uses_real_fit_file_and_respects_transition_options(tmp_path: Path) 
             str(fit_file),
             "--dynamics-step-size",
             "5",
-            "--weather-mode",
-            "fit",
         ],
         stdout=stdout,
         stderr=stderr,
@@ -149,8 +147,7 @@ def test_cli_uses_real_fit_file_and_respects_transition_options(tmp_path: Path) 
 
     assert exit_code == 0
     assert stdout_output == output
-    assert "OpenTopoData progress: request" in error_output
-    assert "OpenTopoData public API calls this run:" in error_output
+    assert error_output == ""
     assert "# FIT Report: 2026-03-24 Running" in output
     assert "0:05:" in output
     assert output.count("0:00:") == FIT_EXPECTATIONS[fit_file.name]["transitions"]

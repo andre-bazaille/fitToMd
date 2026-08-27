@@ -123,7 +123,16 @@ class SessionSummaryBuilder:
 
 
 class SplitBuilder:
-    def build(self, activity: ParsedActivityData) -> tuple[Split, ...]:
+    def build(
+        self,
+        activity: ParsedActivityData,
+        prefer_records: bool = False,
+    ) -> tuple[Split, ...]:
+        if prefer_records:
+            record_splits = self._build_from_records(activity.records)
+            if record_splits:
+                return tuple(record_splits)
+
         kilometer_laps = _resolve_kilometer_laps(activity.laps, activity.records)
         if kilometer_laps:
             return tuple(self._build_from_laps(kilometer_laps))

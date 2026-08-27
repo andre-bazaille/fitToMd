@@ -17,22 +17,22 @@ python -m venv .venv
 pip install -e .[dev]
 pytest
 python -m fit_to_md --help
-python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --transition-sample-interval 5 --transition-window 90
+python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --dynamics-step-size 5
 python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --elevation-smoothing-distance 220 --elevation-min-change 0.8
 python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --elevation-source hybrid --dem-sample-distance 30
 python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --elevation-source dem --opentopodata-dataset eudem25m --opentopodata-base-url https://api.opentopodata.org
 ```
 
-## Transition Sampling
+## Per-Kilometer Dynamics
 
-Use `--transition-sample-interval` to control how often recovery/ramp samples are emitted and `--transition-window` to control how many seconds before and after each lap boundary are included.
+Use `--dynamics-step-size` to control how often heart-rate, pace, and grade samples are emitted from the start to the end of every completed kilometer. `--transition-sample-interval` remains available as an alias for compatibility.
 
 - Smaller intervals increase report detail.
-- Larger windows capture longer recoveries or ramps.
+- Larger intervals reduce report size and token usage.
 
 The report renderer is section-based, so adding new output blocks should be done by adding a section renderer instead of editing a single monolithic formatter.
 
-The session summary uses FIT-native weather fields when available and, by default, falls back to historical weather lookup based on the activity start location and time. Use `--weather-mode fit` to disable the external fallback.
+The session summary uses FIT-native weather fields by default. Use `--weather-mode auto` to explicitly enable historical weather lookup based on the activity start location and time.
 
 ## Elevation Tuning
 
@@ -40,6 +40,7 @@ Session elevation gain/loss is derived from filtered record altitudes rather tha
 
 - Use `--elevation-smoothing-distance` to widen or narrow the smoothing span applied before ascent/descent is accumulated.
 - Use `--elevation-min-change` to ignore small residual altitude changes after smoothing.
+- FIT altitude is used by default and does not require an external request.
 - Use `--elevation-source dem` to always replace FIT altitude with DEM samples fetched from OpenTopoData.
 - Use `--elevation-source hybrid` to keep FIT altitude when it looks stable and fall back to DEM when the altitude trace is clearly noisy.
 - Use `--dem-sample-distance` to control how densely the route is resampled before DEM lookup.
@@ -55,3 +56,12 @@ When you use the public OpenTopoData API at `https://api.opentopodata.org`, the 
 The CLI stays stateless and does not persist daily usage across runs. It prints the number of OpenTopoData requests made during the current run at the end on stderr.
 
 When DEM lookup is active in `dem` or `hybrid` mode, the CLI also prints per-request OpenTopoData progress on stderr while the elevation batches are being fetched.
+
+## External Services and Privacy
+
+The default CLI configuration does not contact weather or elevation services. External enrichment is opt-in:
+
+- `--weather-mode auto` sends the activity start location and time to Open-Meteo when FIT weather is unavailable.
+- `--elevation-source dem` or `--elevation-source hybrid` sends sampled route coordinates to the configured OpenTopoData service.
+
+Use `--weather-mode fit --elevation-source fit` when activity location data must remain local.

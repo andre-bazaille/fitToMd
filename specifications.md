@@ -35,11 +35,11 @@ Calculated based on 1.0 km increments (or using native lap messages if preferred
 * **HR Profile:** Average and Maximum Heart Rate for that kilometer.  
 * **Cadence:** Average steps per minute.
 
-### **C. High-Resolution "Responsiveness" Samples**
+### **C. Per-Kilometer Dynamics Samples**
 
-To allow the LLM to judge "how fast HR goes up/down," the tool should extract raw samples at transition points (e.g., the first and last 60 seconds of a lap or workout step):
+To allow the LLM to assess heart-rate, pace, and grade evolution, the tool should extract samples throughout every completed kilometer:
 
-* **Sample Rate:** Every 5 or 10 seconds during transitions.  
+* **Sample Rate:** Configurable interval, defaulting to every 30 seconds.
 * **Data Points:** \[Timestamp, Heart Rate, Speed, Grade\]. Grade should use the native FIT field when available, otherwise estimate it from the same smoothed altitude profile used for elevation gain/loss.
 
 ## **4\. Output Format (Markdown)**
@@ -60,12 +60,11 @@ The output should follow this exact structure to ensure LLM readability:
 | 1 | 5:30 | 5:30 | \+5m | 125 | 135 | 168 |  
 | 2 | 5:15 | 5:15 | \-2m | 138 | 142 | 172 |
 
-\#\# Heart Rate Dynamics (Recovery & Ramp)  
-\- \*\*Transition: Stop of Lap 4 to Start of Lap 5\*\*  
-  \- T+0s: 175 bpm (Pace: 4:00/km, Grade: -2.40%)  
-  \- T+10s: 165 bpm (Pace: -)  
-  \- T+30s: 150 bpm (Pace: -)  
-  \- T+60s: 135 bpm (Pace: -)
+\#\# Heart Rate Dynamics (Per Kilometer)
+\- \*\*Km 4\*\*
+  \- 0:00: 145 bpm (Pace: 5:00/km, Grade: -2.40%)
+  \- 0:30: 150 bpm (Pace: 4:55/km, Grade: -1.20%)
+  \- 1:00: 155 bpm (Pace: 4:50/km, Grade: 0.50%)
 
 ## **5\. Technical Challenges & Solutions**
 
@@ -75,5 +74,5 @@ The output should follow this exact structure to ensure LLM readability:
 
 ## **6\. Token Optimization Strategy**
 
-* **Sampling:** Instead of 1-second data for a 2-hour run (7200 rows), use 1-km summaries and only high-res samples for recovery/intervals.  
+* **Sampling:** Instead of 1-second data for a 2-hour run (7200 rows), use 1-km summaries and configurable samples within each completed kilometer.
 * **Precision:** Round all floats to 2 decimal places.
