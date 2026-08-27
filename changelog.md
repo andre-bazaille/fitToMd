@@ -7,6 +7,10 @@
 - Added regression coverage for offline defaults and DEM elevation consistency when kilometer laps are present.
 - Removed the obsolete `--transition-window` option and aligned the dynamics documentation with per-kilometer sampling.
 - Added friendly CLI errors for directory inputs, invalid FIT data, input read failures, and Markdown write failures.
+- Moved the normalized activity model and report calculation services from the fitdecode adapter into the domain layer, retaining compatibility re-exports for existing programmatic imports.
+- Replaced raw FIT session dictionaries in the domain with a typed `ActivitySession` translated by the fitdecode adapter.
+- Added direct domain-service tests and an automated dependency rule preventing domain imports from application or infrastructure.
+- Added an architecture guide and refreshed installation, output, exit-code, report-format, and external-enrichment documentation.
 
 ## 2026-04-13
 

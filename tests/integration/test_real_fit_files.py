@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from fit_to_md.cli import run
-from fit_to_md.infrastructure.fitdecode.builders import TransitionBuilder
+from fit_to_md.domain.reporting.services import TransitionBuilder
 from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
 

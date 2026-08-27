@@ -6,7 +6,7 @@ from pathlib import Path
 import fitdecode
 import pytest
 
-from fit_to_md.infrastructure.fitdecode.builders import SessionSummaryBuilder, TransitionBuilder
+from fit_to_md.domain.reporting.services import SessionSummaryBuilder, TransitionBuilder
 from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
 from fit_to_md.domain.reporting.ports import ElevationCoordinate
 from fit_to_md.domain.reporting.entities import WeatherSummary

@@ -4,20 +4,49 @@
 
 ## Project Layout
 
-- `src/fit_to_md/domain/`: core domain entities and ports.
+- `src/fit_to_md/domain/activity/`: decoder-independent activity model.
+- `src/fit_to_md/domain/reporting/`: report entities, ports, and calculation services.
 - `src/fit_to_md/application/`: use-case orchestration.
-- `src/fit_to_md/infrastructure/`: FIT decoding and Markdown rendering adapters.
-- `tests/`: unit tests for application and infrastructure behavior.
+- `src/fit_to_md/infrastructure/`: FIT, Markdown, weather, and elevation adapters.
+- `tests/`: domain, application, infrastructure, architecture, and integration tests.
+
+The domain has no dependency on application or infrastructure code. See [the architecture guide](docs/architecture.md) for the bounded contexts and dependency rules.
 
 ## Quick Start
+
+### Linux and macOS
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+pytest
+python -m fit_to_md --help
+python -m fit_to_md tests/fit_files/2026-03-24-12-20-27.fit --dynamics-step-size 5
+```
+
+### Windows PowerShell
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e .[dev]
+python -m pip install -e ".[dev]"
 pytest
 python -m fit_to_md --help
 python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --dynamics-step-size 5
+```
+
+## Output and Exit Codes
+
+By default, the CLI writes the report next to the input using the same name with a `.md` extension and also prints it to stdout. Use `--output PATH` to choose another file. An existing output file is replaced.
+
+- `0`: report generated and written successfully.
+- `1`: invalid FIT data, provider failure, read failure, or write failure.
+- `2`: invalid command-line arguments or missing/non-file input path.
+
+## Common Options
+
+```powershell
 python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --elevation-smoothing-distance 220 --elevation-min-change 0.8
 python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --elevation-source hybrid --dem-sample-distance 30
 python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --elevation-source dem --opentopodata-dataset eudem25m --opentopodata-base-url https://api.opentopodata.org

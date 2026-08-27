@@ -8,9 +8,9 @@ from typing import Optional, Sequence, TextIO
 import fitdecode
 
 from fit_to_md.application.use_cases.generate_markdown_report import GenerateMarkdownReport
+from fit_to_md.domain.reporting.services import SessionSummaryBuilder, TransitionBuilder
 from fit_to_md.infrastructure.elevation import OpenTopoDataElevationProvider
 from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
-from fit_to_md.infrastructure.fitdecode.builders import SessionSummaryBuilder, TransitionBuilder
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
 from fit_to_md.infrastructure.weather import OpenMeteoHistoricalWeatherProvider
 

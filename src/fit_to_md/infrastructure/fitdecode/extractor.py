@@ -7,10 +7,10 @@ from typing import Any, Callable
 
 import fitdecode
 
+from fit_to_md.domain.activity.entities import Activity, ActivityLap, ActivityRecord, ActivitySession
 from fit_to_md.domain.reporting.entities import FitReport, SessionSummary
 from fit_to_md.domain.reporting.ports import ElevationCoordinate, ElevationProvider, HistoricalWeatherProvider
-from fit_to_md.infrastructure.fitdecode.builders import SessionSummaryBuilder, SplitBuilder, TransitionBuilder
-from fit_to_md.infrastructure.fitdecode.models import ParsedActivityData, ParsedLap, ParsedRecord
+from fit_to_md.domain.reporting.services import SessionSummaryBuilder, SplitBuilder, TransitionBuilder
 
 
 @dataclass(frozen=True)
@@ -83,7 +83,7 @@ class FitdecodeActivityExtractor:
             transitions=self._transition_builder.build(activity),
         )
 
-    def _enrich_activity_elevation(self, activity: ParsedActivityData) -> ParsedActivityData:
+    def _enrich_activity_elevation(self, activity: Activity) -> Activity:
         if self._elevation_mode == "fit" or self._elevation_provider is None:
             return activity
 
@@ -97,7 +97,7 @@ class FitdecodeActivityExtractor:
             return activity
         return replace(activity, records=enriched_records)
 
-    def _enrich_summary_weather(self, summary: SessionSummary, activity: ParsedActivityData) -> SessionSummary:
+    def _enrich_summary_weather(self, summary: SessionSummary, activity: Activity) -> SessionSummary:
         if self._weather_provider is None or summary.weather is not None:
             return summary
 
@@ -105,12 +105,12 @@ class FitdecodeActivityExtractor:
         if start_time is None:
             return summary
 
-        latitude_deg = _semicircles_to_degrees(activity.session_data.get("start_position_lat"))
-        longitude_deg = _semicircles_to_degrees(activity.session_data.get("start_position_long"))
+        latitude_deg = activity.session.start_latitude_deg
+        longitude_deg = activity.session.start_longitude_deg
         if latitude_deg is None or longitude_deg is None:
             return summary
 
-        end_time = _coerce_datetime(activity.session_data.get("timestamp"))
+        end_time = activity.session.end_time
         if end_time is None and summary.total_elapsed_time_s is not None:
             end_time = start_time + timedelta(seconds=summary.total_elapsed_time_s)
 
@@ -125,11 +125,10 @@ class FitdecodeActivityExtractor:
 
         return replace(summary, weather=weather)
 
-    def _parse_activity(self, source: Path) -> ParsedActivityData:
-        session_data: dict[str, object] = {}
-        device_infos: list[dict[str, object]] = []
-        laps: list[ParsedLap] = []
-        records: list[ParsedRecord] = []
+    def _parse_activity(self, source: Path) -> Activity:
+        session_values: dict[str, object] = {}
+        laps: list[ActivityLap] = []
+        records: list[ActivityRecord] = []
         timer_events: list[_TimerEvent] = []
         sport: str | None = None
         sub_sport: str | None = None
@@ -140,9 +139,7 @@ class FitdecodeActivityExtractor:
                     continue
 
                 if frame.name == "session":
-                    session_data = _extract_message_values(frame)
-                elif frame.name == "device_info":
-                    device_infos.append(_extract_message_values(frame))
+                    session_values = _extract_message_values(frame)
                 elif frame.name == "sport":
                     values = _extract_message_values(frame)
                     sport = _coerce_text(values.get("sport")) or sport
@@ -158,18 +155,16 @@ class FitdecodeActivityExtractor:
                     if timer_event is not None:
                         timer_events.append(timer_event)
 
-        normalized_records = _normalize_running_record_cadence(
-            records,
-                sport=sport,
-                session_data=session_data,
-            )
+        sport = sport or _coerce_text(session_values.get("sport"))
+        sub_sport = sub_sport or _coerce_text(session_values.get("sub_sport"))
+        session = _parse_session(session_values, is_running=_is_running_activity(sport))
+        normalized_records = _normalize_running_record_cadence(records, sport=sport)
         records_with_elapsed = _assign_elapsed_time_to_records(
             records=normalized_records,
             timer_events=tuple(timer_events),
         )
-        return ParsedActivityData(
-            session_data=session_data,
-            device_infos=tuple(device_infos),
+        return Activity(
+            session=session,
             sport=sport,
             sub_sport=sub_sport,
             laps=tuple(laps),
@@ -177,9 +172,30 @@ class FitdecodeActivityExtractor:
         )
 
 
-def _parse_lap(frame: Any, index: int) -> ParsedLap:
+def _parse_session(values: dict[str, object], is_running: bool) -> ActivitySession:
+    return ActivitySession(
+        start_time=_coerce_datetime(values.get("start_time")),
+        end_time=_coerce_datetime(values.get("timestamp")),
+        start_latitude_deg=_semicircles_to_degrees(values.get("start_position_lat")),
+        start_longitude_deg=_semicircles_to_degrees(values.get("start_position_long")),
+        total_distance_m=_coerce_float(values.get("total_distance")),
+        total_timer_time_s=_coerce_float(values.get("total_timer_time")),
+        total_elapsed_time_s=_coerce_float(values.get("total_elapsed_time")),
+        total_ascent_m=_coerce_float(values.get("total_ascent")),
+        total_descent_m=_coerce_float(values.get("total_descent")),
+        avg_heart_rate_bpm=_coerce_int(values.get("avg_heart_rate")),
+        max_heart_rate_bpm=_coerce_int(values.get("max_heart_rate")),
+        avg_cadence_spm=_resolve_session_cadence(values, is_running=is_running),
+        avg_speed_mps=_coalesce_float(values.get("enhanced_avg_speed"), values.get("avg_speed")),
+        avg_temperature_c=_coerce_float(values.get("avg_temperature")),
+        min_temperature_c=_coerce_float(values.get("min_temperature")),
+        max_temperature_c=_coerce_float(values.get("max_temperature")),
+    )
+
+
+def _parse_lap(frame: Any, index: int) -> ActivityLap:
     values = _extract_message_values(frame)
-    return ParsedLap(
+    return ActivityLap(
         index=index,
         start_time=_coerce_datetime(values.get("start_time")),
         end_time=_coerce_datetime(values.get("timestamp")),
@@ -196,13 +212,13 @@ def _parse_lap(frame: Any, index: int) -> ParsedLap:
     )
 
 
-def _parse_record(frame: Any) -> ParsedRecord | None:
+def _parse_record(frame: Any) -> ActivityRecord | None:
     values = _extract_message_values(frame)
     timestamp = _coerce_datetime(values.get("timestamp"))
     if timestamp is None:
         return None
 
-    record = ParsedRecord(
+    record = ActivityRecord(
         timestamp=timestamp,
         elapsed_time_s=None,
         distance_m=_coerce_float(values.get("distance")),
@@ -262,17 +278,16 @@ def _extract_message_values(frame: Any) -> dict[str, object]:
 
 
 def _normalize_running_record_cadence(
-    records: list[ParsedRecord],
+    records: list[ActivityRecord],
     sport: str | None,
-    session_data: dict[str, object],
-) -> list[ParsedRecord]:
-    if not _is_running_activity(sport, session_data):
+) -> list[ActivityRecord]:
+    if not _is_running_activity(sport):
         return records
 
-    normalized_records: list[ParsedRecord] = []
+    normalized_records: list[ActivityRecord] = []
     for record in records:
         normalized_records.append(
-            ParsedRecord(
+            ActivityRecord(
                 timestamp=record.timestamp,
                 elapsed_time_s=record.elapsed_time_s,
                 distance_m=record.distance_m,
@@ -291,9 +306,9 @@ def _normalize_running_record_cadence(
 
 
 def _assign_elapsed_time_to_records(
-    records: list[ParsedRecord],
+    records: list[ActivityRecord],
     timer_events: tuple[_TimerEvent, ...],
-) -> tuple[ParsedRecord, ...]:
+) -> tuple[ActivityRecord, ...]:
     if not records:
         return tuple()
 
@@ -384,10 +399,22 @@ def _elapsed_time_at_timestamp(
         break
 
     return elapsed_time_s
+
+
 def _resolve_lap_cadence(values: dict[str, object]) -> int | None:
     running_cadence = _coerce_int(values.get("avg_running_cadence"))
     if running_cadence is not None:
         return _normalize_running_cadence(running_cadence, _coerce_float(values.get("avg_fractional_cadence")))
+    return _coerce_int(values.get("avg_cadence"))
+
+
+def _resolve_session_cadence(values: dict[str, object], is_running: bool) -> int | None:
+    running_cadence = _coerce_int(values.get("avg_running_cadence"))
+    if is_running and running_cadence is not None:
+        return _normalize_running_cadence(
+            running_cadence,
+            _coerce_float(values.get("avg_fractional_cadence")),
+        )
     return _coerce_int(values.get("avg_cadence"))
 
 
@@ -397,9 +424,8 @@ def _normalize_running_cadence(cadence: int | None, fractional_cadence: float | 
     return round((cadence + (fractional_cadence or 0.0)) * 2)
 
 
-def _is_running_activity(sport: str | None, session_data: dict[str, object]) -> bool:
-    raw_sport = _coerce_text(session_data.get("sport")) or sport
-    return (raw_sport or "").lower() == "running"
+def _is_running_activity(sport: str | None) -> bool:
+    return (sport or "").lower() == "running"
 
 
 def _coerce_text(value: object) -> str | None:
@@ -446,11 +472,11 @@ def _semicircles_to_degrees(value: object) -> float | None:
 
 
 def _replace_record_altitudes_from_dem(
-    records: tuple[ParsedRecord, ...],
+    records: tuple[ActivityRecord, ...],
     elevation_provider: ElevationProvider,
     elevation_mode: str,
     sample_distance_m: float,
-) -> tuple[ParsedRecord, ...]:
+) -> tuple[ActivityRecord, ...]:
     coordinate_profile = _build_distance_coordinate_profile(records)
     if len(coordinate_profile) < 2:
         return records
@@ -481,7 +507,7 @@ def _replace_record_altitudes_from_dem(
     if elevation_mode == "hybrid" and not _should_replace_fit_altitude(records, elevation_profile):
         return records
 
-    enriched_records: list[ParsedRecord] = []
+    enriched_records: list[ActivityRecord] = []
     changed = False
     for record in records:
         altitude_m = record.altitude_m
@@ -495,7 +521,7 @@ def _replace_record_altitudes_from_dem(
             changed = True
 
         enriched_records.append(
-            ParsedRecord(
+            ActivityRecord(
                 timestamp=record.timestamp,
                 elapsed_time_s=record.elapsed_time_s,
                 distance_m=record.distance_m,
@@ -517,7 +543,7 @@ def _replace_record_altitudes_from_dem(
 
 
 def _should_replace_fit_altitude(
-    records: tuple[ParsedRecord, ...],
+    records: tuple[ActivityRecord, ...],
     dem_profile: list[_DistanceElevationPoint],
 ) -> bool:
     fit_profile = _build_distance_altitude_profile(records)
@@ -548,7 +574,7 @@ def _should_replace_fit_altitude(
     )
 
 
-def _build_distance_altitude_profile(records: tuple[ParsedRecord, ...]) -> list[_DistanceElevationPoint]:
+def _build_distance_altitude_profile(records: tuple[ActivityRecord, ...]) -> list[_DistanceElevationPoint]:
     profile: list[_DistanceElevationPoint] = []
     for record in records:
         if record.distance_m is None or record.altitude_m is None:
@@ -601,7 +627,7 @@ def _segment_sign_flip_ratio(values: Any) -> float:
     return sign_flips / (len(directions) - 1)
 
 
-def _build_distance_coordinate_profile(records: tuple[ParsedRecord, ...]) -> list[_DistanceCoordinatePoint]:
+def _build_distance_coordinate_profile(records: tuple[ActivityRecord, ...]) -> list[_DistanceCoordinatePoint]:
     profile: list[_DistanceCoordinatePoint] = []
     for record in records:
         if record.distance_m is None or record.latitude_deg is None or record.longitude_deg is None:
