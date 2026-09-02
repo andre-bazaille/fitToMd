@@ -25,6 +25,29 @@ python -m fit_to_md --help
 python -m fit_to_md tests/fit_files/2026-03-24-12-20-27.fit --dynamics-step-size 5
 ```
 
+### Configuration File
+
+Use `--config PATH` to load reusable defaults from a small text file. Each line uses
+`option = value` without the leading `--`; blank lines and comments starting with `#`
+are ignored. Underscores in option names are also accepted.
+
+```ini
+# .config
+dynamics-step-size = 5
+weather-mode = fit
+elevation-source = hybrid
+dem-sample-distance = 30
+```
+
+```bash
+python -m fit_to_md tests/fit_files/2026-03-24-12-20-27.fit --config ./.config
+```
+
+An option passed directly on the command line overrides the same option in the file.
+The configurable options are `output`, `dynamics-step-size`, `weather-mode`,
+`elevation-smoothing-distance`, `elevation-min-change`, `elevation-source`,
+`dem-sample-distance`, `opentopodata-dataset`, and `opentopodata-base-url`.
+
 ### Windows PowerShell
 
 ```powershell

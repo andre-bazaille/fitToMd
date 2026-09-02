@@ -1,3 +1,8 @@
+## 2026-09-02
+
+- Added `--config` support for reusable CLI defaults stored as `option = value` pairs, with command-line options taking precedence.
+- Added validation and unit coverage for missing, malformed, unknown, duplicate, and invalid configuration values.
+
 ## 2026-08-27
 
 - Restored Python 3.9 and 3.10 compatibility by replacing `datetime.UTC` with `timezone.utc`.

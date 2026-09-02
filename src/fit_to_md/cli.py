@@ -7,12 +7,27 @@ from typing import Optional, Sequence, TextIO
 
 import fitdecode
 
-from fit_to_md.application.use_cases.generate_markdown_report import GenerateMarkdownReport
+from fit_to_md.application.use_cases.generate_markdown_report import (
+    GenerateMarkdownReport,
+)
 from fit_to_md.domain.reporting.services import SessionSummaryBuilder, TransitionBuilder
+from fit_to_md.infrastructure.config import ConfigFileError, load_option_file
 from fit_to_md.infrastructure.elevation import OpenTopoDataElevationProvider
 from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
 from fit_to_md.infrastructure.weather import OpenMeteoHistoricalWeatherProvider
+
+CONFIGURABLE_OPTIONS = (
+    "output",
+    "dynamics-step-size",
+    "weather-mode",
+    "elevation-smoothing-distance",
+    "elevation-min-change",
+    "elevation-source",
+    "dem-sample-distance",
+    "opentopodata-dataset",
+    "opentopodata-base-url",
+)
 
 
 def _positive_int(value: str) -> int:
@@ -42,6 +57,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Convert a FIT activity file into a Markdown report.",
     )
     parser.add_argument("input", type=Path, help="Path to the FIT file to parse.")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="Path to a file containing default options as 'option = value' pairs.",
+    )
     parser.add_argument(
         "-o",
         "--output",
@@ -142,7 +162,8 @@ def run(
     stderr: Optional[TextIO] = None,
 ) -> int:
     parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    command_line = list(argv) if argv is not None else sys.argv[1:]
+    args = parser.parse_args(_arguments_with_config_defaults(parser, command_line))
 
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
@@ -196,6 +217,29 @@ def run(
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     return run(argv=argv)
+
+
+def _arguments_with_config_defaults(
+    parser: argparse.ArgumentParser,
+    command_line: Sequence[str],
+) -> Sequence[str]:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", type=Path)
+    config_args, _ = config_parser.parse_known_args(command_line)
+    if config_args.config is None:
+        return command_line
+
+    try:
+        configured_options = load_option_file(config_args.config, CONFIGURABLE_OPTIONS)
+    except ConfigFileError as error:
+        parser.error(str(error))
+
+    defaults = [
+        argument
+        for option, value in configured_options.items()
+        for argument in (f"--{option}", value)
+    ]
+    return [*defaults, *command_line]
 
 
 def _write_elevation_usage_summary(generator: GenerateMarkdownReport, stream: TextIO) -> None:

@@ -253,6 +253,81 @@ def test_run_passes_transition_options_to_default_generator(tmp_path: Path, monk
     assert calls == [(5, "fit", 220.0, 0.8, "hybrid", 25.0, "copernicus", "https://elevation.internal")]
 
 
+def test_run_loads_default_options_from_config_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    config_file = tmp_path / ".config"
+    config_file.write_text(
+        "dynamics-step-size = 8\n"
+        "weather-mode = auto\n"
+        "elevation-source = hybrid\n",
+        encoding="utf-8",
+    )
+    calls: list[tuple[int, str, str]] = []
+
+    def fake_build_default_generator(**options) -> StubGenerator:
+        calls.append(
+            (
+                options["dynamics_step_size"],
+                options["weather_mode"],
+                options["elevation_source"],
+            )
+        )
+        return StubGenerator("# FIT Report\n")
+
+    monkeypatch.setattr(cli, "build_default_generator", fake_build_default_generator)
+
+    exit_code = run(argv=[str(fit_file), "--config", str(config_file)])
+
+    assert exit_code == 0
+    assert calls == [(8, "auto", "hybrid")]
+
+
+def test_explicit_command_line_option_overrides_config_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    config_file = tmp_path / ".config"
+    config_file.write_text("dynamics-step-size = 8\n", encoding="utf-8")
+    configured_step_sizes: list[int] = []
+
+    def fake_build_default_generator(**options) -> StubGenerator:
+        configured_step_sizes.append(options["dynamics_step_size"])
+        return StubGenerator("# FIT Report\n")
+
+    monkeypatch.setattr(cli, "build_default_generator", fake_build_default_generator)
+
+    exit_code = run(
+        argv=[
+            str(fit_file),
+            "--config",
+            str(config_file),
+            "--dynamics-step-size",
+            "12",
+        ]
+    )
+
+    assert exit_code == 0
+    assert configured_step_sizes == [12]
+
+
+def test_run_rejects_invalid_value_from_config_file(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    config_file = tmp_path / ".config"
+    config_file.write_text("weather-mode = unsupported\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as error:
+        run(argv=[str(fit_file), "--config", str(config_file)])
+
+    assert error.value.code == 2
+
+
 def test_build_default_generator_configures_transition_builder() -> None:
     generator = build_default_generator(
         dynamics_step_size=5,
