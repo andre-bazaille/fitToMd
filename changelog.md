@@ -1,5 +1,11 @@
 ## 2026-09-02
 
+- Added `fit-sanitize`, a DDD-structured utility that uses an explicit message
+  allowlist to retain only core activity data, removes serial-number,
+  developer, and unknown fields, and shifts explicit and compressed activity
+  timestamps to a deterministic public-fixture date while preserving the
+  original GPS track. Custom policies that retain developer fields now preserve
+  their metadata, definitions, and values consistently.
 - Reused module-scoped decoded FIT fixtures across real-file integration tests so each source file is decoded only once per test session.
 - Raised the minimum supported Python version to 3.12 and modernized type annotations accordingly.
 - Added Ruff linting and formatting, strict mypy checks, branch-aware coverage with an 80% minimum, and a GitHub Actions quality job.

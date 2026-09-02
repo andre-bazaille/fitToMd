@@ -27,6 +27,27 @@ python -m fit_to_md --help
 python -m fit_to_md tests/fit_files/2026-03-24-12-20-27.fit --dynamics-step-size 5
 ```
 
+### Preparing a public FIT fixture
+
+Real FIT files contain personal profile, device, and timestamp metadata. Create
+a sanitized copy before committing one as a public test fixture:
+
+```bash
+fit-sanitize private-activity.fit --output activity.public.fit
+```
+
+The command retains only the FIT messages required to represent the activity:
+file identity, activity, session, sport, lap, record, and event messages. All
+other messages are removed by default, including known Garmin profile, device,
+health, workout, and course data as well as messages unknown to the installed
+FIT profile. Serial numbers, developer fields, and unknown fields are also
+removed. The activity timeline is shifted to `2020-01-01T12:00:00Z` by default
+while preserving durations and the complete GPS track. Use `--start-at` to
+choose a different synthetic ISO 8601 timestamp. The GPS track remains
+identifying and must only be retained deliberately. The output path is
+mandatory so a private timestamp embedded in the source filename is not reused
+accidentally.
+
 ## Quality Checks
 
 Install the development dependencies, then run the same checks enforced by CI:
