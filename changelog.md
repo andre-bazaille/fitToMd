@@ -1,5 +1,8 @@
 ## 2026-09-02
 
+- Reworked the public README with source installation and usage guidance,
+  detailed OpenTopoData dataset, server, privacy, limits, and route-sampling
+  documentation, and an explanation of elevation smoothing and tuning.
 - Sanitized the real FIT test fixtures, renamed them with generic identifiers,
   removed private metadata, and shifted activity timestamps to the deterministic
   public-fixture date.
