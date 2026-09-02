@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import ast
 from pathlib import Path
 
@@ -10,7 +8,9 @@ def test_domain_does_not_depend_on_application_or_infrastructure() -> None:
     forbidden_imports: list[str] = []
 
     for source_file in domain_root.rglob("*.py"):
-        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        tree = ast.parse(
+            source_file.read_text(encoding="utf-8"), filename=str(source_file)
+        )
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 imported_names = [alias.name for alias in node.names]
@@ -20,7 +20,11 @@ def test_domain_does_not_depend_on_application_or_infrastructure() -> None:
                 continue
 
             for imported_name in imported_names:
-                if imported_name.startswith(("fit_to_md.application", "fit_to_md.infrastructure")):
-                    forbidden_imports.append(f"{source_file.relative_to(repository_root)}: {imported_name}")
+                if imported_name.startswith(
+                    ("fit_to_md.application", "fit_to_md.infrastructure")
+                ):
+                    forbidden_imports.append(
+                        f"{source_file.relative_to(repository_root)}: {imported_name}"
+                    )
 
     assert forbidden_imports == []

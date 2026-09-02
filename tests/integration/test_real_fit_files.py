@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import io
 from pathlib import Path
 
@@ -9,7 +7,6 @@ from fit_to_md.cli import run
 from fit_to_md.domain.reporting.services import TransitionBuilder
 from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
-
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fit_files"
 
@@ -73,21 +70,33 @@ FIT_EXPECTATIONS = {
     ("file_name", "expected"),
     sorted(FIT_EXPECTATIONS.items()),
 )
-def test_extractor_decodes_real_fit_files(file_name: str, expected: dict[str, float | int]) -> None:
+def test_extractor_decodes_real_fit_files(
+    file_name: str, expected: dict[str, float | int]
+) -> None:
     extractor = FitdecodeActivityExtractor()
 
     report = extractor.extract(FIXTURE_DIR / file_name)
 
     assert report.summary.activity_type == "Running"
-    assert report.summary.total_distance_km == pytest.approx(expected["distance_km"], abs=0.001)
-    assert report.summary.total_timer_time_s == pytest.approx(expected["timer_s"], abs=0.01)
-    assert report.summary.total_elapsed_time_s == pytest.approx(expected["elapsed_s"], abs=0.01)
+    assert report.summary.total_distance_km == pytest.approx(
+        expected["distance_km"], abs=0.001
+    )
+    assert report.summary.total_timer_time_s == pytest.approx(
+        expected["timer_s"], abs=0.01
+    )
+    assert report.summary.total_elapsed_time_s == pytest.approx(
+        expected["elapsed_s"], abs=0.01
+    )
     assert report.summary.avg_heart_rate_bpm == expected["avg_hr"]
     assert report.summary.max_heart_rate_bpm == expected["max_hr"]
     assert report.summary.avg_cadence_spm == expected["avg_cad"]
-    assert report.summary.avg_speed_kmh == pytest.approx(expected["avg_speed_kmh"], abs=0.01)
+    assert report.summary.avg_speed_kmh == pytest.approx(
+        expected["avg_speed_kmh"], abs=0.01
+    )
     assert report.summary.total_ascent_m == pytest.approx(expected["ascent_m"], abs=0.2)
-    assert report.summary.total_descent_m == pytest.approx(expected["descent_m"], abs=0.2)
+    assert report.summary.total_descent_m == pytest.approx(
+        expected["descent_m"], abs=0.2
+    )
     assert report.summary.avg_temperature_c is None
     assert report.summary.min_temperature_c is None
     assert report.summary.max_temperature_c is None
@@ -95,14 +104,22 @@ def test_extractor_decodes_real_fit_files(file_name: str, expected: dict[str, fl
     assert len(report.transitions) == expected["transitions"]
     assert report.transitions[0].label == "Km 1"
     assert report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
-    assert report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(report.splits[0].time_seconds, abs=0.1)
+    assert report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(
+        report.splits[0].time_seconds, abs=0.1
+    )
 
 
-def test_extractor_excludes_paused_time_from_real_fit_split_and_transition_durations() -> None:
-    report = FitdecodeActivityExtractor().extract(FIXTURE_DIR / "2026-04-10-07-52-08.fit")
+def test_extractor_excludes_paused_time_from_real_fit_split_and_transition_durations() -> (
+    None
+):
+    report = FitdecodeActivityExtractor().extract(
+        FIXTURE_DIR / "2026-04-10-07-52-08.fit"
+    )
 
     assert report.splits[1].time_seconds == pytest.approx(370.829, abs=0.05)
-    assert report.transitions[1].samples[-1].elapsed_seconds == pytest.approx(370.829, abs=0.05)
+    assert report.transitions[1].samples[-1].elapsed_seconds == pytest.approx(
+        370.829, abs=0.05
+    )
 
 
 @pytest.mark.parametrize("file_name", sorted(FIT_EXPECTATIONS))
@@ -124,7 +141,9 @@ def test_renderer_generates_markdown_for_real_fit_files(file_name: str) -> None:
     assert "0:00:" in markdown
 
 
-def test_cli_uses_real_fit_file_without_external_network_by_default(tmp_path: Path) -> None:
+def test_cli_uses_real_fit_file_without_external_network_by_default(
+    tmp_path: Path,
+) -> None:
     fit_file = tmp_path / "2026-03-24-12-20-27.fit"
     fit_file.write_bytes((FIXTURE_DIR / "2026-03-24-12-20-27.fit").read_bytes())
     stdout = io.StringIO()
@@ -161,7 +180,9 @@ def test_extractor_transition_builder_configuration_affects_real_fit_output() ->
     ).extract(fit_file)
 
     assert len(default_report.transitions) == len(dense_report.transitions)
-    assert len(dense_report.transitions[0].samples) > len(default_report.transitions[0].samples)
+    assert len(dense_report.transitions[0].samples) > len(
+        default_report.transitions[0].samples
+    )
     assert dense_report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
     assert dense_report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(
         dense_report.splits[0].time_seconds,
@@ -169,7 +190,9 @@ def test_extractor_transition_builder_configuration_affects_real_fit_output() ->
     )
 
 
-def test_extractor_omits_grade_for_stationary_kilometer_samples_in_real_fit_file() -> None:
+def test_extractor_omits_grade_for_stationary_kilometer_samples_in_real_fit_file() -> (
+    None
+):
     fit_file = FIXTURE_DIR / "2026-03-24-12-20-27.fit"
 
     report = FitdecodeActivityExtractor().extract(fit_file)
@@ -197,10 +220,14 @@ def test_extractor_estimates_smoothed_transition_grade_for_real_fit_file() -> No
     assert max(transition_grades) > 15.0
 
 
-def test_renderer_shows_estimated_grade_for_real_fit_file_without_native_grade() -> None:
+def test_renderer_shows_estimated_grade_for_real_fit_file_without_native_grade() -> (
+    None
+):
     fit_file = FIXTURE_DIR / "2026-03-24-12-20-27.fit"
 
-    markdown = MarkdownReportRenderer().render(FitdecodeActivityExtractor().extract(fit_file))
+    markdown = MarkdownReportRenderer().render(
+        FitdecodeActivityExtractor().extract(fit_file)
+    )
 
     assert "## Heart Rate Dynamics (Per Kilometer)" in markdown
     assert "Grade:" in markdown

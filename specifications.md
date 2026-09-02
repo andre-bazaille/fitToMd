@@ -6,7 +6,7 @@ A CLI tool designed to parse Garmin/FIT binary files and generate a structured, 
 
 ## **2\. Core Dependencies**
 
-* **Language:** Python 3.9+  
+* **Language:** Python 3.12+
 * **Library:** fitdecode (chosen for modern support and performance).
 
 ## **3\. Data Extraction Logic**

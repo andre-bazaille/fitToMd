@@ -3,6 +3,10 @@
 New code should import these classes from ``fit_to_md.domain.reporting``.
 """
 
-from fit_to_md.domain.reporting import SessionSummaryBuilder, SplitBuilder, TransitionBuilder
+from fit_to_md.domain.reporting import (
+    SessionSummaryBuilder,
+    SplitBuilder,
+    TransitionBuilder,
+)
 
 __all__ = ["SessionSummaryBuilder", "SplitBuilder", "TransitionBuilder"]

@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from fit_to_md.application.use_cases.generate_markdown_report import GenerateMarkdownReport
+from fit_to_md.application.use_cases.generate_markdown_report import (
+    GenerateMarkdownReport,
+)
 from fit_to_md.domain.reporting.entities import FitReport, SessionSummary
 
 

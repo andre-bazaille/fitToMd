@@ -1,16 +1,28 @@
-from __future__ import annotations
-
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, cast
 
 import fitdecode
 
-from fit_to_md.domain.activity.entities import Activity, ActivityLap, ActivityRecord, ActivitySession
+from fit_to_md.domain.activity.entities import (
+    Activity,
+    ActivityLap,
+    ActivityRecord,
+    ActivitySession,
+)
 from fit_to_md.domain.reporting.entities import FitReport, SessionSummary
-from fit_to_md.domain.reporting.ports import ElevationCoordinate, ElevationProvider, HistoricalWeatherProvider
-from fit_to_md.domain.reporting.services import SessionSummaryBuilder, SplitBuilder, TransitionBuilder
+from fit_to_md.domain.reporting.ports import (
+    ElevationCoordinate,
+    ElevationProvider,
+    HistoricalWeatherProvider,
+)
+from fit_to_md.domain.reporting.services import (
+    SessionSummaryBuilder,
+    SplitBuilder,
+    TransitionBuilder,
+)
 
 
 @dataclass(frozen=True)
@@ -97,7 +109,9 @@ class FitdecodeActivityExtractor:
             return activity
         return replace(activity, records=enriched_records)
 
-    def _enrich_summary_weather(self, summary: SessionSummary, activity: Activity) -> SessionSummary:
+    def _enrich_summary_weather(
+        self, summary: SessionSummary, activity: Activity
+    ) -> SessionSummary:
         if self._weather_provider is None or summary.weather is not None:
             return summary
 
@@ -186,7 +200,9 @@ def _parse_session(values: dict[str, object], is_running: bool) -> ActivitySessi
         avg_heart_rate_bpm=_coerce_int(values.get("avg_heart_rate")),
         max_heart_rate_bpm=_coerce_int(values.get("max_heart_rate")),
         avg_cadence_spm=_resolve_session_cadence(values, is_running=is_running),
-        avg_speed_mps=_coalesce_float(values.get("enhanced_avg_speed"), values.get("avg_speed")),
+        avg_speed_mps=_coalesce_float(
+            values.get("enhanced_avg_speed"), values.get("avg_speed")
+        ),
         avg_temperature_c=_coerce_float(values.get("avg_temperature")),
         min_temperature_c=_coerce_float(values.get("min_temperature")),
         max_temperature_c=_coerce_float(values.get("max_temperature")),
@@ -228,7 +244,9 @@ def _parse_record(frame: Any) -> ActivityRecord | None:
         cadence_spm=_coerce_int(values.get("cadence")),
         fractional_cadence=_coerce_float(values.get("fractional_cadence")),
         speed_mps=_coalesce_float(values.get("enhanced_speed"), values.get("speed")),
-        altitude_m=_coalesce_float(values.get("enhanced_altitude"), values.get("altitude")),
+        altitude_m=_coalesce_float(
+            values.get("enhanced_altitude"), values.get("altitude")
+        ),
         grade_percent=_coerce_float(values.get("grade")),
         temperature_c=_coerce_float(values.get("temperature")),
     )
@@ -294,7 +312,9 @@ def _normalize_running_record_cadence(
                 latitude_deg=record.latitude_deg,
                 longitude_deg=record.longitude_deg,
                 heart_rate_bpm=record.heart_rate_bpm,
-                cadence_spm=_normalize_running_cadence(record.cadence_spm, record.fractional_cadence),
+                cadence_spm=_normalize_running_cadence(
+                    record.cadence_spm, record.fractional_cadence
+                ),
                 fractional_cadence=record.fractional_cadence,
                 speed_mps=record.speed_mps,
                 altitude_m=record.altitude_m,
@@ -320,12 +340,17 @@ def _assign_elapsed_time_to_records(
     )
     if not intervals:
         return tuple(
-            replace(record, elapsed_time_s=(record.timestamp - origin_time).total_seconds())
+            replace(
+                record, elapsed_time_s=(record.timestamp - origin_time).total_seconds()
+            )
             for record in records
         )
 
     return tuple(
-        replace(record, elapsed_time_s=_elapsed_time_at_timestamp(record.timestamp, intervals))
+        replace(
+            record,
+            elapsed_time_s=_elapsed_time_at_timestamp(record.timestamp, intervals),
+        )
         for record in records
     )
 
@@ -404,7 +429,9 @@ def _elapsed_time_at_timestamp(
 def _resolve_lap_cadence(values: dict[str, object]) -> int | None:
     running_cadence = _coerce_int(values.get("avg_running_cadence"))
     if running_cadence is not None:
-        return _normalize_running_cadence(running_cadence, _coerce_float(values.get("avg_fractional_cadence")))
+        return _normalize_running_cadence(
+            running_cadence, _coerce_float(values.get("avg_fractional_cadence"))
+        )
     return _coerce_int(values.get("avg_cadence"))
 
 
@@ -418,7 +445,9 @@ def _resolve_session_cadence(values: dict[str, object], is_running: bool) -> int
     return _coerce_int(values.get("avg_cadence"))
 
 
-def _normalize_running_cadence(cadence: int | None, fractional_cadence: float | None) -> int | None:
+def _normalize_running_cadence(
+    cadence: int | None, fractional_cadence: float | None
+) -> int | None:
     if cadence is None:
         return None
     return round((cadence + (fractional_cadence or 0.0)) * 2)
@@ -434,8 +463,8 @@ def _coerce_text(value: object) -> str | None:
     return str(value)
 
 
-def _coerce_datetime(value: object):
-    return value if hasattr(value, "isoformat") else None
+def _coerce_datetime(value: object) -> datetime | None:
+    return cast(datetime, value) if hasattr(value, "isoformat") else None
 
 
 def _coerce_float(value: object) -> float | None:
@@ -499,12 +528,14 @@ def _replace_record_altitudes_from_dem(
     )
     elevation_profile = [
         _DistanceElevationPoint(distance_m=point.distance_m, altitude_m=elevation_m)
-        for point, elevation_m in zip(sampled_points, sampled_elevations)
+        for point, elevation_m in zip(sampled_points, sampled_elevations, strict=False)
         if elevation_m is not None
     ]
     if len(elevation_profile) < 2:
         return records
-    if elevation_mode == "hybrid" and not _should_replace_fit_altitude(records, elevation_profile):
+    if elevation_mode == "hybrid" and not _should_replace_fit_altitude(
+        records, elevation_profile
+    ):
         return records
 
     enriched_records: list[ActivityRecord] = []
@@ -512,7 +543,9 @@ def _replace_record_altitudes_from_dem(
     for record in records:
         altitude_m = record.altitude_m
         if record.distance_m is not None:
-            dem_altitude_m = _interpolate_altitude_at_distance(elevation_profile, record.distance_m)
+            dem_altitude_m = _interpolate_altitude_at_distance(
+                elevation_profile, record.distance_m
+            )
             if dem_altitude_m is not None:
                 altitude_m = dem_altitude_m
 
@@ -556,7 +589,9 @@ def _should_replace_fit_altitude(
     ]
     aligned_pairs = [
         (fit_altitude_m, dem_point.altitude_m)
-        for fit_altitude_m, dem_point in zip(fit_aligned_altitudes, dem_profile)
+        for fit_altitude_m, dem_point in zip(
+            fit_aligned_altitudes, dem_profile, strict=False
+        )
         if fit_altitude_m is not None
     ]
     if len(aligned_pairs) < 5:
@@ -564,17 +599,22 @@ def _should_replace_fit_altitude(
 
     fit_total_variation_m = _total_variation(value for value, _ in aligned_pairs)
     dem_total_variation_m = _total_variation(value for _, value in aligned_pairs)
-    mean_abs_difference_m = sum(abs(fit - dem) for fit, dem in aligned_pairs) / len(aligned_pairs)
+    mean_abs_difference_m = sum(abs(fit - dem) for fit, dem in aligned_pairs) / len(
+        aligned_pairs
+    )
     fit_sign_flip_ratio = _segment_sign_flip_ratio(value for value, _ in aligned_pairs)
 
     return (
-        fit_total_variation_m >= max(dem_total_variation_m * 2.0, dem_total_variation_m + 20.0)
+        fit_total_variation_m
+        >= max(dem_total_variation_m * 2.0, dem_total_variation_m + 20.0)
         and mean_abs_difference_m >= 8.0
         and fit_sign_flip_ratio >= 0.3
     )
 
 
-def _build_distance_altitude_profile(records: tuple[ActivityRecord, ...]) -> list[_DistanceElevationPoint]:
+def _build_distance_altitude_profile(
+    records: tuple[ActivityRecord, ...],
+) -> list[_DistanceElevationPoint]:
     profile: list[_DistanceElevationPoint] = []
     for record in records:
         if record.distance_m is None or record.altitude_m is None:
@@ -627,10 +667,16 @@ def _segment_sign_flip_ratio(values: Any) -> float:
     return sign_flips / (len(directions) - 1)
 
 
-def _build_distance_coordinate_profile(records: tuple[ActivityRecord, ...]) -> list[_DistanceCoordinatePoint]:
+def _build_distance_coordinate_profile(
+    records: tuple[ActivityRecord, ...],
+) -> list[_DistanceCoordinatePoint]:
     profile: list[_DistanceCoordinatePoint] = []
     for record in records:
-        if record.distance_m is None or record.latitude_deg is None or record.longitude_deg is None:
+        if (
+            record.distance_m is None
+            or record.latitude_deg is None
+            or record.longitude_deg is None
+        ):
             continue
         profile.append(
             _DistanceCoordinatePoint(
@@ -673,7 +719,10 @@ def _interpolate_coordinate_at_distance(
 ) -> _DistanceCoordinatePoint | None:
     if not profile:
         return None
-    if target_distance_m < profile[0].distance_m or target_distance_m > profile[-1].distance_m:
+    if (
+        target_distance_m < profile[0].distance_m
+        or target_distance_m > profile[-1].distance_m
+    ):
         return None
     if target_distance_m == profile[0].distance_m:
         return profile[0]
@@ -692,7 +741,9 @@ def _interpolate_coordinate_at_distance(
                 latitude_deg=previous_point.latitude_deg
                 + ((current_point.latitude_deg - previous_point.latitude_deg) * ratio),
                 longitude_deg=previous_point.longitude_deg
-                + ((current_point.longitude_deg - previous_point.longitude_deg) * ratio),
+                + (
+                    (current_point.longitude_deg - previous_point.longitude_deg) * ratio
+                ),
             )
         previous_point = current_point
     return None
@@ -704,7 +755,10 @@ def _interpolate_altitude_at_distance(
 ) -> float | None:
     if not profile:
         return None
-    if target_distance_m < profile[0].distance_m or target_distance_m > profile[-1].distance_m:
+    if (
+        target_distance_m < profile[0].distance_m
+        or target_distance_m > profile[-1].distance_m
+    ):
         return None
     if target_distance_m == profile[0].distance_m:
         return profile[0].altitude_m
@@ -718,6 +772,8 @@ def _interpolate_altitude_at_distance(
             if delta_distance_m == 0:
                 return current_point.altitude_m
             ratio = (target_distance_m - previous_point.distance_m) / delta_distance_m
-            return previous_point.altitude_m + ((current_point.altitude_m - previous_point.altitude_m) * ratio)
+            return previous_point.altitude_m + (
+                (current_point.altitude_m - previous_point.altitude_m) * ratio
+            )
         previous_point = current_point
     return None

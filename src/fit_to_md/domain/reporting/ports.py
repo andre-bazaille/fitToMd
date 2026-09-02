@@ -1,9 +1,8 @@
-from __future__ import annotations
-
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol, Sequence
+from typing import Protocol
 
 from fit_to_md.domain.reporting.entities import FitReport, WeatherSummary
 
@@ -15,18 +14,17 @@ class ElevationCoordinate:
 
 
 class ActivityExtractor(Protocol):
-    def extract(self, source: Path) -> FitReport:
-        ...
+    def extract(self, source: Path) -> FitReport: ...
 
 
 class ReportRenderer(Protocol):
-    def render(self, report: FitReport) -> str:
-        ...
+    def render(self, report: FitReport) -> str: ...
 
 
 class ElevationProvider(Protocol):
-    def lookup(self, coordinates: Sequence[ElevationCoordinate]) -> tuple[float | None, ...]:
-        ...
+    def lookup(
+        self, coordinates: Sequence[ElevationCoordinate]
+    ) -> tuple[float | None, ...]: ...
 
 
 class HistoricalWeatherProvider(Protocol):
@@ -36,5 +34,4 @@ class HistoricalWeatherProvider(Protocol):
         end_time: datetime | None,
         latitude_deg: float,
         longitude_deg: float,
-    ) -> WeatherSummary | None:
-        ...
+    ) -> WeatherSummary | None: ...

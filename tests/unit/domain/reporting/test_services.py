@@ -1,12 +1,14 @@
-from __future__ import annotations
-
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
 import pytest
 
 from fit_to_md.domain.activity import Activity, ActivityRecord
-from fit_to_md.domain.reporting.services import SessionSummaryBuilder, SplitBuilder, TransitionBuilder
+from fit_to_md.domain.reporting.services import (
+    SessionSummaryBuilder,
+    SplitBuilder,
+    TransitionBuilder,
+)
 
 
 def test_reporting_services_build_report_parts_from_domain_activity() -> None:
@@ -14,8 +16,20 @@ def test_reporting_services_build_report_parts_from_domain_activity() -> None:
     activity = Activity(
         sport="running",
         records=(
-            _record(start, elapsed_time_s=0.0, distance_m=0.0, altitude_m=10.0, heart_rate_bpm=120),
-            _record(start + timedelta(seconds=300), elapsed_time_s=300.0, distance_m=1000.0, altitude_m=20.0, heart_rate_bpm=140),
+            _record(
+                start,
+                elapsed_time_s=0.0,
+                distance_m=0.0,
+                altitude_m=10.0,
+                heart_rate_bpm=120,
+            ),
+            _record(
+                start + timedelta(seconds=300),
+                elapsed_time_s=300.0,
+                distance_m=1000.0,
+                altitude_m=20.0,
+                heart_rate_bpm=140,
+            ),
         ),
     )
 
@@ -43,7 +57,9 @@ def test_reporting_services_build_report_parts_from_domain_activity() -> None:
         lambda: TransitionBuilder(grade_distance_m=0),
     ),
 )
-def test_reporting_services_reject_invalid_configuration(factory: Callable[[], object]) -> None:
+def test_reporting_services_reject_invalid_configuration(
+    factory: Callable[[], object],
+) -> None:
     with pytest.raises(ValueError):
         factory()
 

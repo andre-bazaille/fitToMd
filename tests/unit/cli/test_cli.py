@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import io
 from pathlib import Path
 
@@ -37,7 +35,9 @@ class StubElevationProvider:
 class StubGeneratorWithElevationUsage(StubGenerator):
     def __init__(self, markdown: str, summary: str) -> None:
         super().__init__(markdown)
-        self._extractor = type("Extractor", (), {"_elevation_provider": StubElevationProvider(summary)})()
+        self._extractor = type(
+            "Extractor", (), {"_elevation_provider": StubElevationProvider(summary)}
+        )()
 
 
 def test_run_writes_markdown_to_default_output_file(tmp_path: Path) -> None:
@@ -149,7 +149,9 @@ def test_run_returns_friendly_error_when_input_cannot_be_read(tmp_path: Path) ->
     assert "Unable to read input file" in stderr.getvalue()
 
 
-def test_run_returns_friendly_error_when_output_cannot_be_written(tmp_path: Path) -> None:
+def test_run_returns_friendly_error_when_output_cannot_be_written(
+    tmp_path: Path,
+) -> None:
     fit_file = tmp_path / "activity.fit"
     fit_file.write_bytes(b"FIT")
     output_directory = tmp_path / "report-directory"
@@ -192,7 +194,9 @@ def test_default_configuration_does_not_enable_external_providers() -> None:
     assert extractor._elevation_sample_distance_m == 25.0
 
 
-def test_run_passes_transition_options_to_default_generator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_passes_transition_options_to_default_generator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fit_file = tmp_path / "activity.fit"
     fit_file.write_bytes(b"FIT")
     stdout = io.StringIO()
@@ -250,7 +254,18 @@ def test_run_passes_transition_options_to_default_generator(tmp_path: Path, monk
     )
 
     assert exit_code == 0
-    assert calls == [(5, "fit", 220.0, 0.8, "hybrid", 25.0, "copernicus", "https://elevation.internal")]
+    assert calls == [
+        (
+            5,
+            "fit",
+            220.0,
+            0.8,
+            "hybrid",
+            25.0,
+            "copernicus",
+            "https://elevation.internal",
+        )
+    ]
 
 
 def test_run_loads_default_options_from_config_file(
@@ -261,9 +276,7 @@ def test_run_loads_default_options_from_config_file(
     fit_file.write_bytes(b"FIT")
     config_file = tmp_path / ".config"
     config_file.write_text(
-        "dynamics-step-size = 8\n"
-        "weather-mode = auto\n"
-        "elevation-source = hybrid\n",
+        "dynamics-step-size = 8\nweather-mode = auto\nelevation-source = hybrid\n",
         encoding="utf-8",
     )
     calls: list[tuple[int, str, str]] = []

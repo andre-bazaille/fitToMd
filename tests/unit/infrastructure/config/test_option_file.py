@@ -8,9 +8,7 @@ from fit_to_md.infrastructure.config import ConfigFileError, load_option_file
 def test_load_option_file_reads_options_and_ignores_comments(tmp_path: Path) -> None:
     config_file = tmp_path / ".config"
     config_file.write_text(
-        "# Personal defaults\n"
-        "dynamics-step-size = 5\n"
-        "elevation_source = hybrid\n",
+        "# Personal defaults\ndynamics-step-size = 5\nelevation_source = hybrid\n",
         encoding="utf-8",
     )
 

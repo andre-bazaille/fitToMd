@@ -1,10 +1,9 @@
-from __future__ import annotations
-
 import json
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from statistics import mean
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
@@ -64,11 +63,15 @@ class OpenMeteoHistoricalWeatherProvider:
         window_start = normalized_start.replace(minute=0, second=0, microsecond=0)
         window_end = normalized_end.replace(minute=0, second=0, microsecond=0)
         window_samples = [
-            sample for sample in samples if window_start <= sample.timestamp <= window_end
+            sample
+            for sample in samples
+            if window_start <= sample.timestamp <= window_end
         ]
         if not window_samples:
             representative_sample = _nearest_sample(samples, normalized_start)
-            window_samples = [representative_sample] if representative_sample is not None else []
+            window_samples = (
+                [representative_sample] if representative_sample is not None else []
+            )
         if not window_samples:
             return None
 
@@ -76,20 +79,30 @@ class OpenMeteoHistoricalWeatherProvider:
         if representative_sample is None:
             return None
 
-        wind_speed_kmh = _average_optional(sample.wind_speed_kmh for sample in window_samples)
+        wind_speed_kmh = _average_optional(
+            sample.wind_speed_kmh for sample in window_samples
+        )
         wind_direction_label = _degrees_to_compass(
-            _average_wind_direction(sample.wind_direction_deg for sample in window_samples)
+            _average_wind_direction(
+                sample.wind_direction_deg for sample in window_samples
+            )
         )
 
         return WeatherSummary(
             source="historical",
             temperature_c=representative_sample.temperature_c,
             apparent_temperature_c=representative_sample.apparent_temperature_c,
-            condition_summary=_weather_code_to_label(representative_sample.weather_code),
+            condition_summary=_weather_code_to_label(
+                representative_sample.weather_code
+            ),
             wind_speed_kmh=wind_speed_kmh,
             wind_direction_label=wind_direction_label,
-            temperature_min_c=_min_optional(sample.temperature_c for sample in window_samples),
-            temperature_max_c=_max_optional(sample.temperature_c for sample in window_samples),
+            temperature_min_c=_min_optional(
+                sample.temperature_c for sample in window_samples
+            ),
+            temperature_max_c=_max_optional(
+                sample.temperature_c for sample in window_samples
+            ),
         )
 
     def _build_url(
@@ -124,8 +137,8 @@ class OpenMeteoHistoricalWeatherProvider:
 
 def _normalize_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _parse_samples(payload: dict[str, Any]) -> list[_HourlyWeatherSample]:
@@ -148,7 +161,7 @@ def _parse_samples(payload: dict[str, Any]) -> list[_HourlyWeatherSample]:
         if not isinstance(raw_time, str):
             continue
         try:
-            timestamp = datetime.fromisoformat(raw_time).replace(tzinfo=timezone.utc)
+            timestamp = datetime.fromisoformat(raw_time).replace(tzinfo=UTC)
         except ValueError:
             continue
         samples.append(
@@ -172,20 +185,24 @@ def _as_list(value: Any, length: int) -> list[Any]:
     return value
 
 
-def _nearest_sample(samples: list[_HourlyWeatherSample], target: datetime) -> _HourlyWeatherSample | None:
+def _nearest_sample(
+    samples: list[_HourlyWeatherSample], target: datetime
+) -> _HourlyWeatherSample | None:
     if not samples:
         return None
-    return min(samples, key=lambda sample: abs((sample.timestamp - target).total_seconds()))
+    return min(
+        samples, key=lambda sample: abs((sample.timestamp - target).total_seconds())
+    )
 
 
-def _average_optional(values: object) -> float | None:
+def _average_optional(values: Iterable[int | float | None]) -> float | None:
     collected = [float(value) for value in values if value is not None]
     if not collected:
         return None
     return mean(collected)
 
 
-def _average_wind_direction(values: object) -> float | None:
+def _average_wind_direction(values: Iterable[int | float | None]) -> float | None:
     collected = [float(value) for value in values if value is not None]
     if not collected:
         return None
@@ -202,12 +219,31 @@ def _average_wind_direction(values: object) -> float | None:
 def _degrees_to_compass(value: float | None) -> str | None:
     if value is None:
         return None
-    directions = ("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW")
+    directions = (
+        "N",
+        "NNE",
+        "NE",
+        "ENE",
+        "E",
+        "ESE",
+        "SE",
+        "SSE",
+        "S",
+        "SSW",
+        "SW",
+        "WSW",
+        "W",
+        "WNW",
+        "NW",
+        "NNW",
+    )
     index = round(value / 22.5) % len(directions)
     return directions[index]
 
 
 def _weather_code_to_label(value: int | None) -> str | None:
+    if value is None:
+        return None
     labels = {
         0: "Clear sky",
         1: "Mainly clear",
@@ -241,14 +277,14 @@ def _weather_code_to_label(value: int | None) -> str | None:
     return labels.get(value)
 
 
-def _min_optional(values: object) -> float | None:
+def _min_optional(values: Iterable[int | float | None]) -> float | None:
     collected = [float(value) for value in values if value is not None]
     if not collected:
         return None
     return min(collected)
 
 
-def _max_optional(values: object) -> float | None:
+def _max_optional(values: Iterable[int | float | None]) -> float | None:
     collected = [float(value) for value in values if value is not None]
     if not collected:
         return None

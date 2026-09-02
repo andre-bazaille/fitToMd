@@ -1,7 +1,5 @@
-from __future__ import annotations
-
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Sequence
 
 from fit_to_md.domain.reporting.entities import FitReport
 from fit_to_md.infrastructure.markdown.sections import (
@@ -13,7 +11,9 @@ from fit_to_md.infrastructure.markdown.sections import (
 
 
 class MarkdownReportRenderer:
-    def __init__(self, section_renderers: Sequence[ReportSectionRenderer] | None = None) -> None:
+    def __init__(
+        self, section_renderers: Sequence[ReportSectionRenderer] | None = None
+    ) -> None:
         self._section_renderers = tuple(
             section_renderers
             or (

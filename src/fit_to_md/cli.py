@@ -1,9 +1,8 @@
-from __future__ import annotations
-
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional, Sequence, TextIO
+from typing import TextIO
 
 import fitdecode
 
@@ -129,7 +128,9 @@ def build_default_generator(
     opentopodata_dataset: str = "eudem25m",
     opentopodata_base_url: str = "https://api.opentopodata.org",
 ) -> GenerateMarkdownReport:
-    weather_provider = OpenMeteoHistoricalWeatherProvider() if weather_mode == "auto" else None
+    weather_provider = (
+        OpenMeteoHistoricalWeatherProvider() if weather_mode == "auto" else None
+    )
     elevation_provider = (
         OpenTopoDataElevationProvider(
             base_url=opentopodata_base_url,
@@ -156,10 +157,10 @@ def build_default_generator(
 
 
 def run(
-    argv: Optional[Sequence[str]] = None,
-    report_generator: Optional[GenerateMarkdownReport] = None,
-    stdout: Optional[TextIO] = None,
-    stderr: Optional[TextIO] = None,
+    argv: Sequence[str] | None = None,
+    report_generator: GenerateMarkdownReport | None = None,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
 ) -> int:
     parser = build_parser()
     command_line = list(argv) if argv is not None else sys.argv[1:]
@@ -215,7 +216,7 @@ def run(
     return 0
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     return run(argv=argv)
 
 
@@ -242,7 +243,9 @@ def _arguments_with_config_defaults(
     return [*defaults, *command_line]
 
 
-def _write_elevation_usage_summary(generator: GenerateMarkdownReport, stream: TextIO) -> None:
+def _write_elevation_usage_summary(
+    generator: GenerateMarkdownReport, stream: TextIO
+) -> None:
     extractor = getattr(generator, "_extractor", None)
     if extractor is None:
         return
@@ -258,7 +261,9 @@ def _write_elevation_usage_summary(generator: GenerateMarkdownReport, stream: Te
     print(usage_summary_fn(), file=stream)
 
 
-def _configure_elevation_progress(generator: GenerateMarkdownReport, stream: TextIO) -> None:
+def _configure_elevation_progress(
+    generator: GenerateMarkdownReport, stream: TextIO
+) -> None:
     extractor = getattr(generator, "_extractor", None)
     if extractor is None:
         return
@@ -267,7 +272,9 @@ def _configure_elevation_progress(generator: GenerateMarkdownReport, stream: Tex
     if elevation_provider is None:
         return
 
-    set_progress_callback_fn = getattr(elevation_provider, "set_progress_callback", None)
+    set_progress_callback_fn = getattr(
+        elevation_provider, "set_progress_callback", None
+    )
     if not callable(set_progress_callback_fn):
         return
 

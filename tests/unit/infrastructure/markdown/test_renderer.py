@@ -1,6 +1,13 @@
 from datetime import datetime
 
-from fit_to_md.domain.reporting.entities import FitReport, SessionSummary, Split, TransitionDynamics, TransitionSample, WeatherSummary
+from fit_to_md.domain.reporting.entities import (
+    FitReport,
+    SessionSummary,
+    Split,
+    TransitionDynamics,
+    TransitionSample,
+    WeatherSummary,
+)
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
 
 
@@ -171,7 +178,10 @@ def test_render_prefers_enriched_weather_summary() -> None:
 
     markdown = MarkdownReportRenderer().render(report)
 
-    assert "- **Weather:** 15.2C, feels like 14.8C, Sunny, Wind 19.0 km/h SW [historical]" in markdown
+    assert (
+        "- **Weather:** 15.2C, feels like 14.8C, Sunny, Wind 19.0 km/h SW [historical]"
+        in markdown
+    )
 
 
 def test_render_keeps_speed_units_for_non_running_activities() -> None:

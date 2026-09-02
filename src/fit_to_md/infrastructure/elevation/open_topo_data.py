@@ -1,12 +1,10 @@
-from __future__ import annotations
-
 import json
+from collections.abc import Callable, Sequence
 from time import monotonic, sleep
-from typing import Any, Callable, Sequence
+from typing import Any
 from urllib.request import Request, urlopen
 
 from fit_to_md.domain.reporting.ports import ElevationCoordinate
-
 
 _PUBLIC_API_BASE_URL = "https://api.opentopodata.org"
 _PUBLIC_API_MAX_BATCH_SIZE = 100
@@ -33,7 +31,11 @@ class OpenTopoDataElevationProvider:
         self._dataset = dataset
         self._interpolation = interpolation
         self._timeout_s = timeout_s
-        self._max_batch_size = min(max_batch_size, _PUBLIC_API_MAX_BATCH_SIZE) if self.is_public_api else max_batch_size
+        self._max_batch_size = (
+            min(max_batch_size, _PUBLIC_API_MAX_BATCH_SIZE)
+            if self.is_public_api
+            else max_batch_size
+        )
         self._urlopen_fn = urlopen_fn
         self._sleep_fn = sleep_fn
         self._monotonic_fn = monotonic_fn
@@ -41,12 +43,17 @@ class OpenTopoDataElevationProvider:
         self._last_request_started_at: float | None = None
         self._progress_callback: Callable[[int, int], None] | None = None
 
-    def lookup(self, coordinates: Sequence[ElevationCoordinate]) -> tuple[float | None, ...]:
+    def lookup(
+        self, coordinates: Sequence[ElevationCoordinate]
+    ) -> tuple[float | None, ...]:
         if not coordinates:
             return tuple()
 
         batches = _chunk_coordinates(coordinates, self._max_batch_size)
-        if self.is_public_api and (self._request_count + len(batches)) > _PUBLIC_API_MAX_CALLS_PER_RUN:
+        if (
+            self.is_public_api
+            and (self._request_count + len(batches)) > _PUBLIC_API_MAX_CALLS_PER_RUN
+        ):
             raise RuntimeError(
                 "OpenTopoData public API limit exceeded for this run: more than 1000 requests would be required. "
                 "Reduce DEM sampling density or use a self-hosted instance."
@@ -86,7 +93,9 @@ class OpenTopoDataElevationProvider:
             )
         return f"OpenTopoData requests this run: {self._request_count}."
 
-    def set_progress_callback(self, callback: Callable[[int, int], None] | None) -> None:
+    def set_progress_callback(
+        self, callback: Callable[[int, int], None] | None
+    ) -> None:
         self._progress_callback = callback
 
     def _build_request(self, coordinates: Sequence[ElevationCoordinate]) -> Request:
@@ -125,10 +134,15 @@ def _chunk_coordinates(
     coordinates: Sequence[ElevationCoordinate],
     max_batch_size: int,
 ) -> list[Sequence[ElevationCoordinate]]:
-    return [coordinates[index:index + max_batch_size] for index in range(0, len(coordinates), max_batch_size)]
+    return [
+        coordinates[index : index + max_batch_size]
+        for index in range(0, len(coordinates), max_batch_size)
+    ]
 
 
-def _parse_elevations(payload: dict[str, Any], expected_count: int) -> list[float | None]:
+def _parse_elevations(
+    payload: dict[str, Any], expected_count: int
+) -> list[float | None]:
     if payload.get("status") != "OK":
         return [None] * expected_count
 
@@ -136,7 +150,10 @@ def _parse_elevations(payload: dict[str, Any], expected_count: int) -> list[floa
     if not isinstance(results, list):
         return [None] * expected_count
 
-    elevations = [_to_float(result.get("elevation")) if isinstance(result, dict) else None for result in results]
+    elevations = [
+        _to_float(result.get("elevation")) if isinstance(result, dict) else None
+        for result in results
+    ]
     if len(elevations) < expected_count:
         elevations.extend([None] * (expected_count - len(elevations)))
     return elevations[:expected_count]

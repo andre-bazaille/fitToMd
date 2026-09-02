@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import io
 import json
 from urllib.request import Request
@@ -7,7 +5,9 @@ from urllib.request import Request
 import pytest
 
 from fit_to_md.domain.reporting.ports import ElevationCoordinate
-from fit_to_md.infrastructure.elevation.open_topo_data import OpenTopoDataElevationProvider
+from fit_to_md.infrastructure.elevation.open_topo_data import (
+    OpenTopoDataElevationProvider,
+)
 
 
 class FakeResponse:
@@ -70,7 +70,9 @@ def test_open_topo_data_provider_returns_none_for_failed_response() -> None:
 
     provider = OpenTopoDataElevationProvider(urlopen_fn=fake_urlopen)
 
-    elevations = provider.lookup((ElevationCoordinate(latitude_deg=45.0, longitude_deg=7.0),))
+    elevations = provider.lookup(
+        (ElevationCoordinate(latitude_deg=45.0, longitude_deg=7.0),)
+    )
 
     assert elevations == (None,)
 
@@ -93,7 +95,9 @@ def test_open_topo_data_provider_uses_custom_dataset_and_base_url() -> None:
         urlopen_fn=fake_urlopen,
     )
 
-    elevations = provider.lookup((ElevationCoordinate(latitude_deg=45.0, longitude_deg=7.0),))
+    elevations = provider.lookup(
+        (ElevationCoordinate(latitude_deg=45.0, longitude_deg=7.0),)
+    )
 
     assert elevations == (123.0,)
     request, _ = calls[0]
@@ -140,7 +144,9 @@ def test_open_topo_data_public_api_rejects_more_than_1000_calls_in_one_run() -> 
     with pytest.raises(RuntimeError) as error:
         provider.lookup(
             tuple(
-                ElevationCoordinate(latitude_deg=45.0, longitude_deg=7.0 + (index * 0.0001))
+                ElevationCoordinate(
+                    latitude_deg=45.0, longitude_deg=7.0 + (index * 0.0001)
+                )
                 for index in range(1001)
             )
         )
@@ -178,7 +184,9 @@ def test_open_topo_data_provider_reports_batch_progress() -> None:
         )
 
     provider = OpenTopoDataElevationProvider(max_batch_size=1, urlopen_fn=fake_urlopen)
-    provider.set_progress_callback(lambda current, total: progress_updates.append((current, total)))
+    provider.set_progress_callback(
+        lambda current, total: progress_updates.append((current, total))
+    )
 
     provider.lookup(
         (

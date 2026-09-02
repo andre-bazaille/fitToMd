@@ -1,5 +1,8 @@
 ## 2026-09-02
 
+- Raised the minimum supported Python version to 3.12 and modernized type annotations accordingly.
+- Added Ruff linting and formatting, strict mypy checks, branch-aware coverage with an 80% minimum, and a GitHub Actions quality job.
+- Added an executable `ci.sh` helper that runs the complete CI quality suite locally.
 - Added `--config` support for reusable CLI defaults stored as `option = value` pairs, with command-line options taking precedence.
 - Added validation and unit coverage for missing, malformed, unknown, duplicate, and invalid configuration values.
 

@@ -2,6 +2,8 @@
 
 `fitToMd` is a Python CLI project for converting Garmin FIT files into structured Markdown reports suitable for LLM-based coaching analysis.
 
+Python 3.12 or newer is required.
+
 ## Project Layout
 
 - `src/fit_to_md/domain/activity/`: decoder-independent activity model.
@@ -17,13 +19,29 @@ The domain has no dependency on application or infrastructure code. See [the arc
 ### Linux and macOS
 
 ```bash
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
 pytest
 python -m fit_to_md --help
 python -m fit_to_md tests/fit_files/2026-03-24-12-20-27.fit --dynamics-step-size 5
 ```
+
+## Quality Checks
+
+Install the development dependencies, then run the same checks enforced by CI:
+
+```bash
+python -m pip install -e '.[dev]'
+./ci.sh
+```
+
+The script runs Ruff linting and formatting checks, strict mypy validation, and
+pytest with coverage. It uses `.venv/bin/python` automatically when available;
+set `FIT_TO_MD_PYTHON` to select another Python executable.
+
+The test command measures statement and branch coverage for `fit_to_md` and fails
+when total coverage is below 80%.
 
 ### Configuration File
 

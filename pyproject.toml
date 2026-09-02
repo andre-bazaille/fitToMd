@@ -7,21 +7,48 @@ name = "fit-to-md"
 version = "0.1.0"
 description = "CLI tool to convert FIT activity files into token-efficient Markdown reports."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "fitdecode>=0.10.0",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "mypy>=1.15.0",
     "pytest>=8.0.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.11.0",
 ]
 
 [project.scripts]
 fit-to-md = "fit_to_md.cli:main"
 
 [tool.pytest.ini_options]
+addopts = "--cov=fit_to_md --cov-branch --cov-report=term-missing --cov-fail-under=80"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["fit_to_md"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+
+[tool.mypy]
+files = ["src/fit_to_md"]
+python_version = "3.12"
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["fitdecode", "fitdecode.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "UP"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

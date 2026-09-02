@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 from fit_to_md.domain.reporting.ports import ActivityExtractor, ReportRenderer

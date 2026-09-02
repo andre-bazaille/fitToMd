@@ -1,16 +1,20 @@
-from __future__ import annotations
-
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Protocol, Sequence
+from typing import Protocol
 
-from fit_to_md.domain.reporting.entities import FitReport, Split, TransitionDynamics, TransitionSample
+from fit_to_md.domain.reporting.entities import (
+    FitReport,
+    SessionSummary,
+    Split,
+    TransitionDynamics,
+    TransitionSample,
+)
 
 
 class ReportSectionRenderer(Protocol):
     heading: str
 
-    def render_lines(self, report: FitReport) -> Sequence[str]:
-        ...
+    def render_lines(self, report: FitReport) -> Sequence[str]: ...
 
 
 class SessionSummarySectionRenderer:
@@ -76,18 +80,26 @@ class TransitionSectionRenderer:
 
         lines: list[str] = []
         for transition in report.transitions:
-            lines.extend(self._render_transition(transition, report.summary.activity_type))
+            lines.extend(
+                self._render_transition(transition, report.summary.activity_type)
+            )
         return lines
 
-    def _render_transition(self, transition: TransitionDynamics, report_activity_type: str | None) -> list[str]:
+    def _render_transition(
+        self, transition: TransitionDynamics, report_activity_type: str | None
+    ) -> list[str]:
         lines = [f"- **{transition.label}**"]
         for sample in transition.samples:
             lines.append(self._render_transition_sample(sample, report_activity_type))
         return lines
 
-    def _render_transition_sample(self, sample: TransitionSample, report_activity_type: str | None) -> str:
+    def _render_transition_sample(
+        self, sample: TransitionSample, report_activity_type: str | None
+    ) -> str:
         speed_label = "Pace" if _uses_pace(report_activity_type) else "Speed"
-        metrics = [f"{speed_label}: {_format_speed_metric(sample.speed_kmh, report_activity_type)}"]
+        metrics = [
+            f"{speed_label}: {_format_speed_metric(sample.speed_kmh, report_activity_type)}"
+        ]
         if sample.grade_percent is not None:
             metrics.append(f"Grade: {_format_grade(sample.grade_percent)}")
         return (
@@ -134,21 +146,29 @@ def _uses_pace(activity_type: str | None) -> bool:
     return "run" in normalized_activity_type
 
 
-def _format_weather(summary) -> str:
+def _format_weather(summary: SessionSummary) -> str:
     if summary.weather is not None:
         parts = [
             _format_temperature(summary.weather.temperature_c),
         ]
         if summary.weather.apparent_temperature_c is not None:
-            parts.append(f"feels like {_format_temperature(summary.weather.apparent_temperature_c)}")
+            parts.append(
+                f"feels like {_format_temperature(summary.weather.apparent_temperature_c)}"
+            )
         if summary.weather.condition_summary:
             parts.append(summary.weather.condition_summary)
-        wind_label = _format_wind(summary.weather.wind_speed_kmh, summary.weather.wind_direction_label)
+        wind_label = _format_wind(
+            summary.weather.wind_speed_kmh, summary.weather.wind_direction_label
+        )
         if wind_label is not None:
             parts.append(wind_label)
         return ", ".join(parts) + f" [{summary.weather.source}]"
 
-    if summary.avg_temperature_c is None and summary.min_temperature_c is None and summary.max_temperature_c is None:
+    if (
+        summary.avg_temperature_c is None
+        and summary.min_temperature_c is None
+        and summary.max_temperature_c is None
+    ):
         return "FIT and historical weather data unavailable"
     return (
         f"Avg {_format_temperature(summary.avg_temperature_c)} / "
@@ -210,5 +230,3 @@ def _format_duration(value: float | None) -> str:
     if hours:
         return f"{hours}:{minutes:02d}:{seconds:02d}"
     return f"{minutes}:{seconds:02d}"
-
-
