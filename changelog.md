@@ -1,5 +1,8 @@
 ## 2026-09-02
 
+- Sanitized the real FIT test fixtures, renamed them with generic identifiers,
+  removed private metadata, and shifted activity timestamps to the deterministic
+  public-fixture date.
 - Added `fit-sanitize`, a DDD-structured utility that uses an explicit message
   allowlist to retain only core activity data, removes serial-number,
   developer, and unknown fields, and shifts explicit and compressed activity

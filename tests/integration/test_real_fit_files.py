@@ -17,7 +17,7 @@ from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fit_files"
 
 FIT_EXPECTATIONS = {
-    "2026-03-24-12-20-27.fit": {
+    "0001.fit": {
         "distance_km": 11.98832,
         "timer_s": 3679.86,
         "elapsed_s": 3679.86,
@@ -30,7 +30,7 @@ FIT_EXPECTATIONS = {
         "splits": 11,
         "transitions": 11,
     },
-    "2026-03-27-08-13-16.fit": {
+    "0002.fit": {
         "distance_km": 12.81122,
         "timer_s": 4065.255,
         "elapsed_s": 4065.255,
@@ -43,7 +43,7 @@ FIT_EXPECTATIONS = {
         "splits": 12,
         "transitions": 12,
     },
-    "2026-03-28-10-24-00.fit": {
+    "0003.fit": {
         "distance_km": 8.96621,
         "timer_s": 2712.293,
         "elapsed_s": 2712.293,
@@ -56,7 +56,7 @@ FIT_EXPECTATIONS = {
         "splits": 8,
         "transitions": 8,
     },
-    "2026-04-10-07-52-08.fit": {
+    "0004.fit": {
         "distance_km": 14.07929,
         "timer_s": 4513.122,
         "elapsed_s": 5116.335,
@@ -159,7 +159,7 @@ def test_extractor_decodes_real_fit_files(
 def test_extractor_excludes_paused_time_from_real_fit_split_and_transition_durations(
     decoded_fit_files: dict[str, _DecodedFitFixture],
 ) -> None:
-    report = decoded_fit_files["2026-04-10-07-52-08.fit"].report
+    report = decoded_fit_files["0004.fit"].report
 
     assert report.splits[1].time_seconds == pytest.approx(370.829, abs=0.05)
     assert report.transitions[1].samples[-1].elapsed_seconds == pytest.approx(
@@ -192,11 +192,11 @@ def test_cli_uses_real_fit_file_without_external_network_by_default(
     tmp_path: Path,
     decoded_fit_files: dict[str, _DecodedFitFixture],
 ) -> None:
-    fit_file = tmp_path / "2026-03-24-12-20-27.fit"
-    fit_file.write_bytes((FIXTURE_DIR / "2026-03-24-12-20-27.fit").read_bytes())
+    fit_file = tmp_path / "0001.fit"
+    fit_file.write_bytes((FIXTURE_DIR / "0001.fit").read_bytes())
     stdout = io.StringIO()
     stderr = io.StringIO()
-    output_file = tmp_path / "2026-03-24-12-20-27.md"
+    output_file = tmp_path / "0001.md"
     decoded_file = decoded_fit_files[fit_file.name]
     dense_report = replace(
         decoded_file.report,
@@ -224,7 +224,7 @@ def test_cli_uses_real_fit_file_without_external_network_by_default(
     assert exit_code == 0
     assert stdout_output == output
     assert error_output == ""
-    assert "# FIT Report: 2026-03-24 Running" in output
+    assert "# FIT Report: 2020-01-01 Running" in output
     assert "0:05:" in output
     assert output.count("0:00:") == FIT_EXPECTATIONS[fit_file.name]["transitions"]
 
@@ -232,7 +232,7 @@ def test_cli_uses_real_fit_file_without_external_network_by_default(
 def test_transition_builder_configuration_affects_real_fit_output(
     decoded_fit_files: dict[str, _DecodedFitFixture],
 ) -> None:
-    decoded_file = decoded_fit_files["2026-03-24-12-20-27.fit"]
+    decoded_file = decoded_fit_files["0001.fit"]
     default_transitions = decoded_file.report.transitions
     dense_transitions = TransitionBuilder(sample_interval_s=5).build(
         decoded_file.activity
@@ -250,7 +250,7 @@ def test_transition_builder_configuration_affects_real_fit_output(
 def test_extractor_omits_grade_for_stationary_kilometer_samples_in_real_fit_file(
     decoded_fit_files: dict[str, _DecodedFitFixture],
 ) -> None:
-    report = decoded_fit_files["2026-03-24-12-20-27.fit"].report
+    report = decoded_fit_files["0001.fit"].report
 
     assert report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
     assert report.transitions[0].samples[0].speed_kmh == pytest.approx(0.0)
@@ -260,7 +260,7 @@ def test_extractor_omits_grade_for_stationary_kilometer_samples_in_real_fit_file
 def test_extractor_estimates_smoothed_transition_grade_for_real_fit_file(
     decoded_fit_files: dict[str, _DecodedFitFixture],
 ) -> None:
-    report = decoded_fit_files["2026-03-24-12-20-27.fit"].report
+    report = decoded_fit_files["0001.fit"].report
 
     transition_grades = [
         sample.grade_percent
@@ -278,9 +278,7 @@ def test_extractor_estimates_smoothed_transition_grade_for_real_fit_file(
 def test_renderer_shows_estimated_grade_for_real_fit_file_without_native_grade(
     decoded_fit_files: dict[str, _DecodedFitFixture],
 ) -> None:
-    markdown = MarkdownReportRenderer().render(
-        decoded_fit_files["2026-03-24-12-20-27.fit"].report
-    )
+    markdown = MarkdownReportRenderer().render(decoded_fit_files["0001.fit"].report)
 
     assert "## Heart Rate Dynamics (Per Kilometer)" in markdown
     assert "Grade:" in markdown

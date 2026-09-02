@@ -24,7 +24,7 @@ source .venv/bin/activate
 python -m pip install -e '.[dev]'
 pytest
 python -m fit_to_md --help
-python -m fit_to_md tests/fit_files/2026-03-24-12-20-27.fit --dynamics-step-size 5
+python -m fit_to_md tests/fit_files/0001.fit --dynamics-step-size 5
 ```
 
 ### Preparing a public FIT fixture
@@ -79,7 +79,7 @@ dem-sample-distance = 30
 ```
 
 ```bash
-python -m fit_to_md tests/fit_files/2026-03-24-12-20-27.fit --config ./.config
+python -m fit_to_md tests/fit_files/0001.fit --config ./.config
 ```
 
 An option passed directly on the command line overrides the same option in the file.
@@ -95,7 +95,7 @@ python -m venv .venv
 python -m pip install -e ".[dev]"
 pytest
 python -m fit_to_md --help
-python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --dynamics-step-size 5
+python -m fit_to_md .\tests\fit_files\0001.fit --dynamics-step-size 5
 ```
 
 ## Output and Exit Codes
@@ -109,9 +109,9 @@ By default, the CLI writes the report next to the input using the same name with
 ## Common Options
 
 ```powershell
-python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --elevation-smoothing-distance 220 --elevation-min-change 0.8
-python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --elevation-source hybrid --dem-sample-distance 30
-python -m fit_to_md .\tests\fit_files\2026-03-24-12-20-27.fit --elevation-source dem --opentopodata-dataset eudem25m --opentopodata-base-url https://api.opentopodata.org
+python -m fit_to_md .\tests\fit_files\0001.fit --elevation-smoothing-distance 220 --elevation-min-change 0.8
+python -m fit_to_md .\tests\fit_files\0001.fit --elevation-source hybrid --dem-sample-distance 30
+python -m fit_to_md .\tests\fit_files\0001.fit --elevation-source dem --opentopodata-dataset eudem25m --opentopodata-base-url https://api.opentopodata.org
 ```
 
 ## Per-Kilometer Dynamics

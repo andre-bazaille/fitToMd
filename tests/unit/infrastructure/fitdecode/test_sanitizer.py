@@ -10,7 +10,6 @@ from fit_to_md.domain.privacy import FitSanitizationPolicy
 from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
 from fit_to_md.infrastructure.fitdecode.sanitizer import FitdecodeFixtureSanitizer
 
-FIXTURE = Path(__file__).resolve().parents[3] / "fit_files" / "2026-03-24-12-20-27.fit"
 FIT_EPOCH = datetime(1989, 12, 31, tzinfo=UTC)
 
 
@@ -136,6 +135,143 @@ def _write_developer_field_fit(path: Path) -> tuple[datetime, tuple[int, ...]]:
     return start, record_offsets
 
 
+def _write_private_activity_fit(path: Path) -> None:
+    start = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
+    start_timestamp = _fit_timestamp(start)
+    end_timestamp = start_timestamp + 60
+
+    file_id = (
+        _definition(
+            0,
+            0,
+            [
+                (0, 1, 0x02),
+                (1, 2, 0x84),
+                (2, 2, 0x84),
+                (3, 4, 0x86),
+                (4, 4, 0x86),
+            ],
+        )
+        + bytes([0, 4])
+        + struct.pack("<HHII", 1, 1, 123456789, start_timestamp)
+    )
+    sport = _definition(1, 12, [(0, 1, 0x00)]) + bytes([1, 1])
+    event = (
+        _definition(
+            2,
+            21,
+            [(253, 4, 0x86), (0, 1, 0x00), (1, 1, 0x00)],
+        )
+        + bytes([2])
+        + struct.pack("<IBB", start_timestamp, 0, 0)
+    )
+    lap = (
+        _definition(
+            3,
+            19,
+            [
+                (253, 4, 0x86),
+                (2, 4, 0x86),
+                (7, 4, 0x86),
+                (8, 4, 0x86),
+                (9, 4, 0x86),
+                (15, 1, 0x02),
+            ],
+        )
+        + bytes([3])
+        + struct.pack(
+            "<IIIIIB", end_timestamp, start_timestamp, 60_000, 60_000, 100_000, 140
+        )
+    )
+    record_definition = _definition(
+        4,
+        20,
+        [
+            (253, 4, 0x86),
+            (0, 4, 0x85),
+            (1, 4, 0x85),
+            (5, 4, 0x86),
+            (3, 1, 0x02),
+            (6, 2, 0x84),
+            (2, 2, 0x84),
+        ],
+    )
+    records = b"".join(
+        bytes([4]) + struct.pack("<IiiIBHH", *values)
+        for values in (
+            (start_timestamp, 596_523_236, 29_826_162, 0, 135, 3_000, 3_000),
+            (end_timestamp, 596_530_000, 29_835_000, 100_000, 145, 3_000, 3_005),
+        )
+    )
+    session = (
+        _definition(
+            5,
+            18,
+            [
+                (253, 4, 0x86),
+                (2, 4, 0x86),
+                (7, 4, 0x86),
+                (8, 4, 0x86),
+                (9, 4, 0x86),
+                (5, 1, 0x00),
+                (16, 1, 0x02),
+            ],
+        )
+        + bytes([5])
+        + struct.pack(
+            "<IIIIIBB",
+            end_timestamp,
+            start_timestamp,
+            60_000,
+            60_000,
+            100_000,
+            1,
+            140,
+        )
+    )
+    activity = (
+        _definition(
+            6,
+            34,
+            [
+                (253, 4, 0x86),
+                (0, 4, 0x86),
+                (1, 2, 0x84),
+                (2, 1, 0x00),
+                (3, 1, 0x00),
+                (4, 1, 0x00),
+            ],
+        )
+        + bytes([6])
+        + struct.pack("<IIHBBB", end_timestamp, 60_000, 1, 0, 26, 1)
+    )
+    device_info = (
+        _definition(
+            7,
+            23,
+            [(253, 4, 0x86), (3, 4, 0x86)],
+        )
+        + bytes([7])
+        + struct.pack("<II", start_timestamp, 987654321)
+    )
+
+    body = (
+        file_id
+        + sport
+        + event
+        + lap
+        + record_definition
+        + records
+        + session
+        + activity
+        + device_info
+    )
+    header_without_crc = struct.pack("<BBHI4s", 14, 0x10, 2196, len(body), b".FIT")
+    header = header_without_crc + struct.pack("<H", compute_crc(header_without_crc))
+    contents = header + body
+    path.write_bytes(contents + struct.pack("<H", compute_crc(contents)))
+
+
 def _data_messages(path: Path) -> list[object]:
     with fitdecode.FitReader(path, check_crc=fitdecode.CrcCheck.RAISE) as reader:
         return [
@@ -169,14 +305,16 @@ def _timestamps_by_field(
 def test_sanitizer_removes_private_metadata_and_preserves_activity(
     tmp_path: Path,
 ) -> None:
+    source = tmp_path / "private.fit"
     destination = tmp_path / "public.fit"
     target = datetime(2020, 1, 1, 12, tzinfo=UTC)
+    _write_private_activity_fit(source)
 
     summary = FitdecodeFixtureSanitizer().sanitize(
-        FIXTURE, destination, target, FitSanitizationPolicy()
+        source, destination, target, FitSanitizationPolicy()
     )
 
-    original_messages = _data_messages(FIXTURE)
+    original_messages = _data_messages(source)
     public_messages = _data_messages(destination)
     public_names = {message.name for message in public_messages}
     public_fields = [field for message in public_messages for field in message.fields]
@@ -202,7 +340,7 @@ def test_sanitizer_removes_private_metadata_and_preserves_activity(
             timestamp + expected_delta for timestamp in original_values
         ]
 
-    original = FitdecodeActivityExtractor().extract(FIXTURE).summary
+    original = FitdecodeActivityExtractor().extract(source).summary
     sanitized = FitdecodeActivityExtractor().extract(destination).summary
     assert sanitized.start_time == target
     assert sanitized.total_distance_km == original.total_distance_km
