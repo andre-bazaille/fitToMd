@@ -1,10 +1,16 @@
 import io
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
 
+from fit_to_md.application.use_cases.generate_markdown_report import (
+    GenerateMarkdownReport,
+)
 from fit_to_md.cli import run
-from fit_to_md.domain.reporting.services import TransitionBuilder
+from fit_to_md.domain.activity import Activity
+from fit_to_md.domain.reporting.entities import FitReport, SessionSummary
+from fit_to_md.domain.reporting.services import SessionSummaryBuilder, TransitionBuilder
 from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
 
@@ -66,16 +72,57 @@ FIT_EXPECTATIONS = {
 }
 
 
+@dataclass(frozen=True)
+class _DecodedFitFixture:
+    activity: Activity
+    report: FitReport
+
+
+class _CapturingSessionSummaryBuilder(SessionSummaryBuilder):
+    def __init__(self) -> None:
+        super().__init__()
+        self.activity: Activity | None = None
+
+    def build(self, activity: Activity) -> SessionSummary:
+        self.activity = activity
+        return super().build(activity)
+
+
+class _CachedReportExtractor:
+    def __init__(self, reports: dict[str, FitReport]) -> None:
+        self._reports = reports
+
+    def extract(self, source: Path) -> FitReport:
+        return self._reports[source.name]
+
+
+@pytest.fixture(scope="module")
+def decoded_fit_files() -> dict[str, _DecodedFitFixture]:
+    decoded_files: dict[str, _DecodedFitFixture] = {}
+    for file_name in sorted(FIT_EXPECTATIONS):
+        summary_builder = _CapturingSessionSummaryBuilder()
+        report = FitdecodeActivityExtractor(summary_builder=summary_builder).extract(
+            FIXTURE_DIR / file_name
+        )
+        activity = summary_builder.activity
+        assert activity is not None
+        decoded_files[file_name] = _DecodedFitFixture(
+            activity=activity,
+            report=report,
+        )
+    return decoded_files
+
+
 @pytest.mark.parametrize(
     ("file_name", "expected"),
     sorted(FIT_EXPECTATIONS.items()),
 )
 def test_extractor_decodes_real_fit_files(
-    file_name: str, expected: dict[str, float | int]
+    file_name: str,
+    expected: dict[str, float | int],
+    decoded_fit_files: dict[str, _DecodedFitFixture],
 ) -> None:
-    extractor = FitdecodeActivityExtractor()
-
-    report = extractor.extract(FIXTURE_DIR / file_name)
+    report = decoded_fit_files[file_name].report
 
     assert report.summary.activity_type == "Running"
     assert report.summary.total_distance_km == pytest.approx(
@@ -109,12 +156,10 @@ def test_extractor_decodes_real_fit_files(
     )
 
 
-def test_extractor_excludes_paused_time_from_real_fit_split_and_transition_durations() -> (
-    None
-):
-    report = FitdecodeActivityExtractor().extract(
-        FIXTURE_DIR / "2026-04-10-07-52-08.fit"
-    )
+def test_extractor_excludes_paused_time_from_real_fit_split_and_transition_durations(
+    decoded_fit_files: dict[str, _DecodedFitFixture],
+) -> None:
+    report = decoded_fit_files["2026-04-10-07-52-08.fit"].report
 
     assert report.splits[1].time_seconds == pytest.approx(370.829, abs=0.05)
     assert report.transitions[1].samples[-1].elapsed_seconds == pytest.approx(
@@ -123,11 +168,13 @@ def test_extractor_excludes_paused_time_from_real_fit_split_and_transition_durat
 
 
 @pytest.mark.parametrize("file_name", sorted(FIT_EXPECTATIONS))
-def test_renderer_generates_markdown_for_real_fit_files(file_name: str) -> None:
-    extractor = FitdecodeActivityExtractor()
+def test_renderer_generates_markdown_for_real_fit_files(
+    file_name: str,
+    decoded_fit_files: dict[str, _DecodedFitFixture],
+) -> None:
     renderer = MarkdownReportRenderer()
 
-    markdown = renderer.render(extractor.extract(FIXTURE_DIR / file_name))
+    markdown = renderer.render(decoded_fit_files[file_name].report)
 
     assert markdown.startswith("# FIT Report:")
     assert "## Session Summary" in markdown
@@ -143,12 +190,18 @@ def test_renderer_generates_markdown_for_real_fit_files(file_name: str) -> None:
 
 def test_cli_uses_real_fit_file_without_external_network_by_default(
     tmp_path: Path,
+    decoded_fit_files: dict[str, _DecodedFitFixture],
 ) -> None:
     fit_file = tmp_path / "2026-03-24-12-20-27.fit"
     fit_file.write_bytes((FIXTURE_DIR / "2026-03-24-12-20-27.fit").read_bytes())
     stdout = io.StringIO()
     stderr = io.StringIO()
     output_file = tmp_path / "2026-03-24-12-20-27.md"
+    decoded_file = decoded_fit_files[fit_file.name]
+    dense_report = replace(
+        decoded_file.report,
+        transitions=TransitionBuilder(sample_interval_s=5).build(decoded_file.activity),
+    )
 
     exit_code = run(
         argv=[
@@ -156,6 +209,10 @@ def test_cli_uses_real_fit_file_without_external_network_by_default(
             "--dynamics-step-size",
             "5",
         ],
+        report_generator=GenerateMarkdownReport(
+            extractor=_CachedReportExtractor({fit_file.name: dense_report}),
+            renderer=MarkdownReportRenderer(),
+        ),
         stdout=stdout,
         stderr=stderr,
     )
@@ -172,40 +229,38 @@ def test_cli_uses_real_fit_file_without_external_network_by_default(
     assert output.count("0:00:") == FIT_EXPECTATIONS[fit_file.name]["transitions"]
 
 
-def test_extractor_transition_builder_configuration_affects_real_fit_output() -> None:
-    fit_file = FIXTURE_DIR / "2026-03-24-12-20-27.fit"
-    default_report = FitdecodeActivityExtractor().extract(fit_file)
-    dense_report = FitdecodeActivityExtractor(
-        transition_builder=TransitionBuilder(sample_interval_s=5)
-    ).extract(fit_file)
-
-    assert len(default_report.transitions) == len(dense_report.transitions)
-    assert len(dense_report.transitions[0].samples) > len(
-        default_report.transitions[0].samples
+def test_transition_builder_configuration_affects_real_fit_output(
+    decoded_fit_files: dict[str, _DecodedFitFixture],
+) -> None:
+    decoded_file = decoded_fit_files["2026-03-24-12-20-27.fit"]
+    default_transitions = decoded_file.report.transitions
+    dense_transitions = TransitionBuilder(sample_interval_s=5).build(
+        decoded_file.activity
     )
-    assert dense_report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
-    assert dense_report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(
-        dense_report.splits[0].time_seconds,
+
+    assert len(default_transitions) == len(dense_transitions)
+    assert len(dense_transitions[0].samples) > len(default_transitions[0].samples)
+    assert dense_transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
+    assert dense_transitions[0].samples[-1].elapsed_seconds == pytest.approx(
+        decoded_file.report.splits[0].time_seconds,
         abs=0.1,
     )
 
 
-def test_extractor_omits_grade_for_stationary_kilometer_samples_in_real_fit_file() -> (
-    None
-):
-    fit_file = FIXTURE_DIR / "2026-03-24-12-20-27.fit"
-
-    report = FitdecodeActivityExtractor().extract(fit_file)
+def test_extractor_omits_grade_for_stationary_kilometer_samples_in_real_fit_file(
+    decoded_fit_files: dict[str, _DecodedFitFixture],
+) -> None:
+    report = decoded_fit_files["2026-03-24-12-20-27.fit"].report
 
     assert report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
     assert report.transitions[0].samples[0].speed_kmh == pytest.approx(0.0)
     assert report.transitions[0].samples[0].grade_percent is None
 
 
-def test_extractor_estimates_smoothed_transition_grade_for_real_fit_file() -> None:
-    fit_file = FIXTURE_DIR / "2026-03-24-12-20-27.fit"
-
-    report = FitdecodeActivityExtractor().extract(fit_file)
+def test_extractor_estimates_smoothed_transition_grade_for_real_fit_file(
+    decoded_fit_files: dict[str, _DecodedFitFixture],
+) -> None:
+    report = decoded_fit_files["2026-03-24-12-20-27.fit"].report
 
     transition_grades = [
         sample.grade_percent
@@ -220,13 +275,11 @@ def test_extractor_estimates_smoothed_transition_grade_for_real_fit_file() -> No
     assert max(transition_grades) > 15.0
 
 
-def test_renderer_shows_estimated_grade_for_real_fit_file_without_native_grade() -> (
-    None
-):
-    fit_file = FIXTURE_DIR / "2026-03-24-12-20-27.fit"
-
+def test_renderer_shows_estimated_grade_for_real_fit_file_without_native_grade(
+    decoded_fit_files: dict[str, _DecodedFitFixture],
+) -> None:
     markdown = MarkdownReportRenderer().render(
-        FitdecodeActivityExtractor().extract(fit_file)
+        decoded_fit_files["2026-03-24-12-20-27.fit"].report
     )
 
     assert "## Heart Rate Dynamics (Per Kilometer)" in markdown

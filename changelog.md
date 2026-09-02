@@ -1,5 +1,6 @@
 ## 2026-09-02
 
+- Reused module-scoped decoded FIT fixtures across real-file integration tests so each source file is decoded only once per test session.
 - Raised the minimum supported Python version to 3.12 and modernized type annotations accordingly.
 - Added Ruff linting and formatting, strict mypy checks, branch-aware coverage with an 80% minimum, and a GitHub Actions quality job.
 - Added an executable `ci.sh` helper that runs the complete CI quality suite locally.
