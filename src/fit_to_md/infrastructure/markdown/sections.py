@@ -22,7 +22,7 @@ class SessionSummarySectionRenderer:
 
     def render_lines(self, report: FitReport) -> Sequence[str]:
         summary = report.summary
-        speed_label = "Avg Pace" if _uses_pace(summary.activity_type) else "Avg Speed"
+        speed_label = "Avg Pace" if _uses_pace(summary.sport) else "Avg Speed"
         return [
             f"- **Start Time:** {_format_datetime(summary.start_time)}",
             f"- **Activity Type:** {summary.activity_type or '-'}",
@@ -40,7 +40,7 @@ class SessionSummarySectionRenderer:
                 f"{_format_integer(summary.max_heart_rate_bpm)} bpm"
             ),
             f"- **Avg Cadence:** {_format_integer(summary.avg_cadence_spm)} spm",
-            f"- **{speed_label}:** {_format_speed_metric(summary.avg_speed_kmh, summary.activity_type)}",
+            f"- **{speed_label}:** {_format_speed_metric(summary.avg_speed_kmh, summary.sport)}",
             f"- **Weather:** {_format_weather(summary)}",
         ]
 
@@ -80,26 +80,22 @@ class TransitionSectionRenderer:
 
         lines: list[str] = []
         for transition in report.transitions:
-            lines.extend(
-                self._render_transition(transition, report.summary.activity_type)
-            )
+            lines.extend(self._render_transition(transition, report.summary.sport))
         return lines
 
     def _render_transition(
-        self, transition: TransitionDynamics, report_activity_type: str | None
+        self, transition: TransitionDynamics, sport: str | None
     ) -> list[str]:
         lines = [f"- **{transition.label}**"]
         for sample in transition.samples:
-            lines.append(self._render_transition_sample(sample, report_activity_type))
+            lines.append(self._render_transition_sample(sample, sport))
         return lines
 
     def _render_transition_sample(
-        self, sample: TransitionSample, report_activity_type: str | None
+        self, sample: TransitionSample, sport: str | None
     ) -> str:
-        speed_label = "Pace" if _uses_pace(report_activity_type) else "Speed"
-        metrics = [
-            f"{speed_label}: {_format_speed_metric(sample.speed_kmh, report_activity_type)}"
-        ]
+        speed_label = "Pace" if _uses_pace(sport) else "Speed"
+        metrics = [f"{speed_label}: {_format_speed_metric(sample.speed_kmh, sport)}"]
         if sample.grade_percent is not None:
             metrics.append(f"Grade: {_format_grade(sample.grade_percent)}")
         return (
@@ -120,8 +116,8 @@ def _format_distance(value: float | None) -> str:
     return f"{value:.2f} km"
 
 
-def _format_speed_metric(value: float | None, activity_type: str | None) -> str:
-    if _uses_pace(activity_type):
+def _format_speed_metric(value: float | None, sport: str | None) -> str:
+    if _uses_pace(sport):
         return _format_pace(value)
     return _format_speed(value)
 
@@ -139,11 +135,10 @@ def _format_pace(speed_kmh: float | None) -> str:
     return f"{_format_duration(seconds_per_km)}/km"
 
 
-def _uses_pace(activity_type: str | None) -> bool:
-    if activity_type is None:
+def _uses_pace(sport: str | None) -> bool:
+    if sport is None:
         return False
-    normalized_activity_type = activity_type.strip().casefold()
-    return "run" in normalized_activity_type
+    return sport.strip().casefold() == "running"
 
 
 def _format_weather(summary: SessionSummary) -> str:

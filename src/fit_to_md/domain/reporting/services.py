@@ -152,6 +152,7 @@ class SessionSummaryBuilder:
             avg_temperature_c=avg_temperature_c,
             min_temperature_c=min_temperature_c,
             max_temperature_c=max_temperature_c,
+            sport=activity.sport,
         )
 
 

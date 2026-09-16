@@ -1,5 +1,8 @@
 ## 2026-09-16
 
+- Preserved the canonical parent sport in report summaries so running sub-sports,
+  including treadmill, track, and trail running, consistently render pace rather
+  than speed in session summaries and dynamics.
 - Made activity-time output filenames portable across Windows and POSIX by using
   `YYYY-MM-DD HH-MM.md`, while continuing to recognize legacy colon-named reports
   during directory processing.

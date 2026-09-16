@@ -20,6 +20,7 @@ class SessionSummary:
     min_temperature_c: float | None
     max_temperature_c: float | None
     weather: "WeatherSummary | None" = None
+    sport: str | None = None
 
     @property
     def has_fit_temperature(self) -> bool:

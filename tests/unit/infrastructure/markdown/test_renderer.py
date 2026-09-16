@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from fit_to_md.domain.reporting.entities import (
     FitReport,
     SessionSummary,
@@ -29,6 +31,7 @@ def test_render_formats_expected_markdown_sections() -> None:
             avg_temperature_c=18.4,
             min_temperature_c=15.0,
             max_temperature_c=22.5,
+            sport="running",
         ),
         splits=(
             Split(
@@ -89,6 +92,7 @@ def test_render_omits_missing_transition_grade() -> None:
             avg_temperature_c=18.4,
             min_temperature_c=15.0,
             max_temperature_c=22.5,
+            sport="running",
         ),
         transitions=(
             TransitionDynamics(
@@ -136,6 +140,7 @@ def test_render_accepts_custom_section_renderers() -> None:
             avg_temperature_c=None,
             min_temperature_c=None,
             max_temperature_c=None,
+            sport="running",
         )
     )
 
@@ -165,6 +170,7 @@ def test_render_prefers_enriched_weather_summary() -> None:
             avg_temperature_c=None,
             min_temperature_c=None,
             max_temperature_c=None,
+            sport="running",
             weather=WeatherSummary(
                 source="historical",
                 temperature_c=15.2,
@@ -202,6 +208,7 @@ def test_render_prefers_fit_temperature_when_both_weather_sources_are_present() 
             avg_temperature_c=20.0,
             min_temperature_c=None,
             max_temperature_c=None,
+            sport="running",
             weather=WeatherSummary(
                 source="historical",
                 temperature_c=5.0,
@@ -237,6 +244,7 @@ def test_render_keeps_speed_units_for_non_running_activities() -> None:
             avg_temperature_c=None,
             min_temperature_c=None,
             max_temperature_c=None,
+            sport="cycling",
         ),
         transitions=(
             TransitionDynamics(
@@ -257,3 +265,64 @@ def test_render_keeps_speed_units_for_non_running_activities() -> None:
 
     assert "- **Avg Speed:** 30.00 km/h" in markdown
     assert "0:00: 155 bpm (Speed: 30.00 km/h, Grade: 1.20%)" in markdown
+
+
+@pytest.mark.parametrize(
+    ("activity_type", "sport", "expected_summary", "expected_dynamics"),
+    [
+        ("Treadmill", "running", "- **Avg Pace:** 5:33/km", "Pace: 5:33/km"),
+        ("Track", "running", "- **Avg Pace:** 5:33/km", "Pace: 5:33/km"),
+        ("Running", "running", "- **Avg Pace:** 5:33/km", "Pace: 5:33/km"),
+        ("Trail Running", "running", "- **Avg Pace:** 5:33/km", "Pace: 5:33/km"),
+        (
+            "Cycling",
+            "cycling",
+            "- **Avg Speed:** 10.80 km/h",
+            "Speed: 10.80 km/h",
+        ),
+    ],
+)
+def test_render_selects_speed_units_from_canonical_sport(
+    activity_type: str,
+    sport: str,
+    expected_summary: str,
+    expected_dynamics: str,
+) -> None:
+    report = FitReport(
+        summary=SessionSummary(
+            start_time=None,
+            activity_name=activity_type,
+            activity_type=activity_type,
+            total_distance_km=None,
+            total_timer_time_s=None,
+            total_elapsed_time_s=None,
+            total_ascent_m=None,
+            total_descent_m=None,
+            avg_heart_rate_bpm=None,
+            max_heart_rate_bpm=None,
+            avg_cadence_spm=None,
+            avg_speed_kmh=10.8,
+            avg_temperature_c=None,
+            min_temperature_c=None,
+            max_temperature_c=None,
+            sport=sport,
+        ),
+        transitions=(
+            TransitionDynamics(
+                label="Km 1",
+                samples=(
+                    TransitionSample(
+                        elapsed_seconds=0.0,
+                        heart_rate_bpm=150,
+                        speed_kmh=10.8,
+                        grade_percent=None,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    markdown = MarkdownReportRenderer().render(report)
+
+    assert expected_summary in markdown
+    assert expected_dynamics in markdown

@@ -38,6 +38,7 @@ def test_reporting_services_build_report_parts_from_domain_activity() -> None:
     dynamics = TransitionBuilder(sample_interval_s=300).build(activity)
 
     assert summary.activity_type == "Running"
+    assert summary.sport == "running"
     assert summary.total_distance_km == pytest.approx(1.0)
     assert summary.total_timer_time_s == pytest.approx(300.0)
     assert len(splits) == 1
@@ -45,6 +46,26 @@ def test_reporting_services_build_report_parts_from_domain_activity() -> None:
     assert splits[0].avg_heart_rate_bpm == 140
     assert len(dynamics) == 1
     assert [sample.elapsed_seconds for sample in dynamics[0].samples] == [0.0, 300.0]
+
+
+@pytest.mark.parametrize(
+    ("sub_sport", "expected_activity_type"),
+    [
+        ("treadmill", "Treadmill"),
+        ("track", "Track"),
+        ("generic", "Running"),
+        ("trail_running", "Trail Running"),
+    ],
+)
+def test_summary_preserves_running_sport_when_displaying_sub_sport(
+    sub_sport: str, expected_activity_type: str
+) -> None:
+    summary = SessionSummaryBuilder().build(
+        Activity(sport="running", sub_sport=sub_sport)
+    )
+
+    assert summary.activity_type == expected_activity_type
+    assert summary.sport == "running"
 
 
 def test_reporting_uses_record_boundaries_instead_of_workout_laps() -> None:
