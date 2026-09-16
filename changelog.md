@@ -1,5 +1,8 @@
 ## 2026-09-16
 
+- Made activity-time output filenames portable across Windows and POSIX by using
+  `YYYY-MM-DD HH-MM.md`, while continuing to recognize legacy colon-named reports
+  during directory processing.
 - Made optional Open-Meteo and OpenTopoData enrichment fail gracefully when a
   service returns malformed JSON structures or non-finite numeric values.
 - Rejected NaN and infinite elevation settings at both CLI/config parsing and

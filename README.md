@@ -59,13 +59,13 @@ fit-to-md activity.fit --output reports/activity.md
 ```
 
 Use `--output-by-activity-time` to name the default output from the activity's
-start time, for example `2020-01-01 12:00.md`:
+start time, for example `2020-01-01 12-00.md`:
 
 ```bash
 fit-to-md activity.fit --output-by-activity-time
 ```
 
-The activity time uses the `YYYY-MM-DD HH:MM` format. An explicit `--output`
+The activity time uses the portable `YYYY-MM-DD HH-MM` format. An explicit `--output`
 path takes precedence. The activity must contain a usable start time for this
 option.
 
@@ -81,7 +81,7 @@ fit-to-md activities/
 Each FIT file is written beside its source using the automatic `<fit-name>.md`
 name. Existing Markdown files are skipped, so the command can be rerun to
 process only new activities. Use `--output-by-activity-time` to match files by
-the `YYYY-MM-DD HH:MM.md` activity-time name instead:
+the `YYYY-MM-DD HH-MM.md` activity-time name instead:
 
 ```bash
 fit-to-md activities/ --output-by-activity-time
@@ -90,7 +90,8 @@ fit-to-md activities/ --output-by-activity-time
 Directory input does not support `--output`, and nested directories are not
 scanned. Newly generated reports are concatenated on standard output. A failed
 file does not stop the remaining files; the command returns exit code `1` after
-the batch completes.
+the batch completes. For compatibility, directory processing also recognizes and
+skips reports created with the former `YYYY-MM-DD HH:MM.md` naming convention.
 
 ## Example output
 

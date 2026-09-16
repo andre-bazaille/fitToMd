@@ -1,4 +1,5 @@
 import io
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -194,7 +195,7 @@ def test_run_can_name_output_from_activity_start_time(tmp_path: Path) -> None:
     generator = StubGeneratorWithReport(
         "# FIT Report\n", _report_with_start_time(datetime(2026, 9, 16, 7, 5, 59))
     )
-    expected_output = tmp_path / "2026-09-16 07:05.md"
+    expected_output = tmp_path / "2026-09-16 07-05.md"
 
     exit_code = run(
         argv=[str(fit_file), "--output-by-activity-time"],
@@ -209,6 +210,15 @@ def test_run_can_name_output_from_activity_start_time(tmp_path: Path) -> None:
     assert generator.calls == [fit_file]
     assert expected_output.read_text(encoding="utf-8") == "# FIT Report\n"
     assert not fit_file.with_suffix(".md").exists()
+
+
+def test_activity_time_output_name_uses_only_portable_filename_characters() -> None:
+    output = cli._output_path_from_activity_time(
+        Path("activity.fit"), datetime(2026, 9, 16, 7, 5, 59)
+    )
+
+    assert output.name == "2026-09-16 07-05.md"
+    assert not set('<>:"/\\|?*').intersection(output.name)
 
 
 def test_run_rejects_activity_time_output_without_activity_start_time(
@@ -374,7 +384,7 @@ def test_run_uses_activity_time_names_and_skips_existing_reports(
     second_fit = tmp_path / "second.fit"
     first_fit.write_bytes(b"FIT")
     second_fit.write_bytes(b"FIT")
-    first_report_path = tmp_path / "2026-09-16 07:05.md"
+    first_report_path = tmp_path / "2026-09-16 07-05.md"
     first_report_path.write_text("keep this report", encoding="utf-8")
     reports = {
         first_fit: _report_with_start_time(datetime(2026, 9, 16, 7, 5)),
@@ -396,8 +406,38 @@ def test_run_uses_activity_time_names_and_skips_existing_reports(
     assert exit_code == 0
     assert generator.calls == [first_fit, second_fit]
     assert first_report_path.read_text(encoding="utf-8") == "keep this report"
-    assert (tmp_path / "2026-09-16 08:10.md").read_text(encoding="utf-8") == "# new"
+    assert (tmp_path / "2026-09-16 08-10.md").read_text(encoding="utf-8") == "# new"
     assert stdout.getvalue() == "# new\n"
+    assert stderr.getvalue() == ""
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows cannot represent the legacy colon-named report",
+)
+def test_run_skips_legacy_activity_time_report(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    legacy_report = tmp_path / "2026-09-16 07:05.md"
+    legacy_report.write_text("keep legacy report", encoding="utf-8")
+    generator = StubGeneratorWithReports(
+        {fit_file: "# replacement"},
+        {fit_file: _report_with_start_time(datetime(2026, 9, 16, 7, 5))},
+    )
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(tmp_path), "--output-by-activity-time"],
+        report_generator=generator,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    assert legacy_report.read_text(encoding="utf-8") == "keep legacy report"
+    assert not (tmp_path / "2026-09-16 07-05.md").exists()
+    assert stdout.getvalue() == ""
     assert stderr.getvalue() == ""
 
 
@@ -490,8 +530,8 @@ def test_run_continues_after_missing_activity_time(tmp_path: Path) -> None:
     )
 
     assert exit_code == 1
-    assert not (input_directory / "2026-09-16 07:05.md").exists()
-    assert (input_directory / "2026-09-16 08:10.md").read_text(
+    assert not (input_directory / "2026-09-16 07-05.md").exists()
+    assert (input_directory / "2026-09-16 08-10.md").read_text(
         encoding="utf-8"
     ) == "# valid"
     assert stdout.getvalue() == "# valid\n"
@@ -532,8 +572,8 @@ def test_run_does_not_write_duplicate_activity_time_destinations(
     )
 
     assert exit_code == 1
-    assert not (input_directory / "2026-09-16 07:05.md").exists()
-    assert (input_directory / "2026-09-16 08:10.md").read_text(
+    assert not (input_directory / "2026-09-16 07-05.md").exists()
+    assert (input_directory / "2026-09-16 08-10.md").read_text(
         encoding="utf-8"
     ) == "# unique"
     assert stdout.getvalue() == "# unique\n"
@@ -773,7 +813,7 @@ def test_run_loads_activity_time_output_option_from_config_file(
     )
 
     assert exit_code == 0
-    assert (tmp_path / "2026-09-16 07:05.md").exists()
+    assert (tmp_path / "2026-09-16 07-05.md").exists()
 
 
 def test_run_rejects_invalid_boolean_output_option_from_config_file(

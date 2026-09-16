@@ -41,6 +41,7 @@ class _PendingReport:
     source: Path
     output: Path
     markdown: str
+    matching_outputs: tuple[Path, ...]
 
 
 def _positive_int(value: str) -> int:
@@ -89,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-by-activity-time",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Name the default output file from the activity start time as 'YYYY-MM-DD HH:MM.md'.",
+        help="Name the default output file from the activity start time as 'YYYY-MM-DD HH-MM.md'.",
     )
     parser.add_argument(
         "--dynamics-step-size",
@@ -334,15 +335,17 @@ def _run_directory(
                     source=fit_file,
                     output=output_path,
                     markdown=markdown,
+                    matching_outputs=(output_path,),
                 )
             )
             continue
 
         try:
             report, markdown = generator.execute_with_report(fit_file)
-            output_path = _output_path_from_activity_time(
+            matching_outputs = _activity_time_output_candidates(
                 fit_file, report.summary.start_time
             )
+            output_path = matching_outputs[0]
         except (
             fitdecode.FitError,
             OSError,
@@ -353,13 +356,14 @@ def _run_directory(
             failed = True
             continue
 
-        if output_path.is_file():
+        if any(path.is_file() for path in matching_outputs):
             continue
         pending_reports.append(
             _PendingReport(
                 source=fit_file,
                 output=output_path,
                 markdown=markdown,
+                matching_outputs=matching_outputs,
             )
         )
 
@@ -383,7 +387,7 @@ def _run_directory(
     for pending_report in pending_reports:
         if pending_report.output in colliding_outputs:
             continue
-        if pending_report.output.is_file():
+        if any(path.is_file() for path in pending_report.matching_outputs):
             continue
 
         try:
@@ -427,11 +431,21 @@ def _write_markdown_to_stdout(markdown: str, stream: TextIO) -> None:
 def _output_path_from_activity_time(
     input_path: Path, start_time: datetime | None
 ) -> Path:
+    return _activity_time_output_candidates(input_path, start_time)[0]
+
+
+def _activity_time_output_candidates(
+    input_path: Path, start_time: datetime | None
+) -> tuple[Path, ...]:
     if start_time is None:
         raise RuntimeError(
             "Activity start time unavailable; cannot use activity time for output name."
         )
-    return input_path.with_name(f"{start_time.strftime('%Y-%m-%d %H:%M')}.md")
+    portable_output = input_path.with_name(
+        f"{start_time.strftime('%Y-%m-%d %H-%M')}.md"
+    )
+    legacy_output = input_path.with_name(f"{start_time.strftime('%Y-%m-%d %H:%M')}.md")
+    return portable_output, legacy_output
 
 
 def main(argv: Sequence[str] | None = None) -> int:
