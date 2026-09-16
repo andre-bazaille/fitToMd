@@ -70,6 +70,7 @@ class TransitionSample:
 class TransitionDynamics:
     label: str
     samples: tuple[TransitionSample, ...]
+    sampling_note: str | None = None
 
 
 @dataclass(frozen=True)

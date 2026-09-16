@@ -193,7 +193,7 @@ class FitdecodeActivityExtractor:
         sub_sport = sub_sport or _coerce_text(session_values.get("sub_sport"))
         session = _parse_session(session_values, is_running=_is_running_activity(sport))
         normalized_records = _normalize_running_record_cadence(records, sport=sport)
-        records_with_elapsed = _assign_elapsed_time_to_records(
+        records_with_elapsed, has_active_timing = _assign_elapsed_time_to_records(
             records=normalized_records,
             timer_events=tuple(timer_events),
         )
@@ -203,6 +203,7 @@ class FitdecodeActivityExtractor:
             sub_sport=sub_sport,
             laps=tuple(laps),
             records=records_with_elapsed,
+            has_active_record_timing=has_active_timing,
         )
 
 
@@ -348,9 +349,9 @@ def _normalize_running_record_cadence(
 def _assign_elapsed_time_to_records(
     records: list[ActivityRecord],
     timer_events: tuple[_TimerEvent, ...],
-) -> tuple[ActivityRecord, ...]:
+) -> tuple[tuple[ActivityRecord, ...], bool]:
     if not records:
-        return tuple()
+        return tuple(), False
 
     origin_time = records[0].timestamp
     intervals = _build_timer_intervals(
@@ -364,7 +365,7 @@ def _assign_elapsed_time_to_records(
                 record, elapsed_time_s=(record.timestamp - origin_time).total_seconds()
             )
             for record in records
-        )
+        ), False
 
     return tuple(
         replace(
@@ -372,7 +373,7 @@ def _assign_elapsed_time_to_records(
             elapsed_time_s=_elapsed_time_at_timestamp(record.timestamp, intervals),
         )
         for record in records
-    )
+    ), True
 
 
 def _build_timer_intervals(
@@ -554,6 +555,20 @@ def _replace_record_altitudes_from_dem(
             ),
         )
         for index, point in enumerate(sampled_points)
+    ]
+    # A single point cannot establish a correction profile. Keep missing points
+    # as boundaries so isolated successes never join across a coverage gap.
+    elevation_samples = [
+        sample
+        if (
+            (index > 0 and elevation_samples[index - 1].altitude_m is not None)
+            or (
+                index + 1 < len(elevation_samples)
+                and elevation_samples[index + 1].altitude_m is not None
+            )
+        )
+        else replace(sample, altitude_m=None)
+        for index, sample in enumerate(elevation_samples)
     ]
     if not any(sample.altitude_m is not None for sample in elevation_samples):
         return records

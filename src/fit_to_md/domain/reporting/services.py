@@ -160,14 +160,15 @@ class SplitBuilder:
         activity: Activity,
         prefer_records: bool = False,
     ) -> tuple[Split, ...]:
-        record_splits = self._build_from_records(activity.records)
+        record_splits = self._build_from_records(activity)
         if record_splits:
             return tuple(record_splits)
 
         kilometer_laps = _resolve_aligned_kilometer_laps(activity.laps)
         return tuple(self._build_from_laps(kilometer_laps))
 
-    def _build_from_records(self, records: tuple[ActivityRecord, ...]) -> list[Split]:
+    def _build_from_records(self, activity: Activity) -> list[Split]:
+        records = activity.records
         distance_records = [
             record for record in records if record.distance_m is not None
         ]
@@ -206,7 +207,9 @@ class SplitBuilder:
                 end_boundary=crossing,
             )
 
-            split_time_s = _resolve_boundary_duration_s(previous_boundary, crossing)
+            split_time_s = _resolve_split_duration_s(
+                activity, kilometer, origin_distance_m, previous_boundary, crossing
+            )
             elevation_delta_m = None
             if (
                 previous_boundary.altitude_m is not None
@@ -329,19 +332,35 @@ class TransitionBuilder:
                 continue
 
             start_boundary = boundaries[-1]
-            duration_s = _resolve_boundary_duration_s(start_boundary, end_boundary)
+            record_duration_s = _resolve_boundary_duration_s(
+                start_boundary, end_boundary
+            )
+            duration_s = _resolve_split_duration_s(
+                activity, kilometer, origin_distance_m, start_boundary, end_boundary
+            )
+            timing_is_uncertain = duration_s != record_duration_s
             if duration_s <= 0:
                 boundaries.append(end_boundary)
                 continue
 
             samples: list[TransitionSample] = []
-            for elapsed_seconds in _build_elapsed_samples(
-                duration_s, self._sample_interval_s
-            ):
+            elapsed_samples = (
+                [0.0, duration_s]
+                if timing_is_uncertain
+                else _build_elapsed_samples(duration_s, self._sample_interval_s)
+            )
+            for elapsed_seconds in elapsed_samples:
+                # Lap totals establish duration, not where the pause occurred.
+                # Only boundary measurements can be placed on the active timeline.
+                record_offset_s = (
+                    record_duration_s
+                    if timing_is_uncertain and elapsed_seconds == duration_s
+                    else elapsed_seconds
+                )
                 record = _interpolate_record_within_boundary_window(
                     records=activity.records,
                     start_boundary=start_boundary,
-                    elapsed_seconds=elapsed_seconds,
+                    elapsed_seconds=record_offset_s,
                 )
                 if record is None:
                     continue
@@ -368,11 +387,44 @@ class TransitionBuilder:
                     TransitionDynamics(
                         label=f"Km {kilometer}",
                         samples=tuple(samples),
+                        sampling_note=(
+                            "Intermediate samples unavailable: pause timing was not recorded."
+                            if timing_is_uncertain
+                            else None
+                        ),
                     )
                 )
             boundaries.append(end_boundary)
 
         return tuple(transitions)
+
+
+def _resolve_split_duration_s(
+    activity: Activity,
+    kilometer: int,
+    origin_distance_m: float,
+    start: _BoundaryPoint,
+    end: _BoundaryPoint,
+) -> float:
+    record_duration_s = _resolve_boundary_duration_s(start, end)
+    if activity.has_active_record_timing or origin_distance_m != 0.0:
+        return record_duration_s
+    if len(activity.laps) < kilometer:
+        return record_duration_s
+
+    # Only a contiguous prefix of exact kilometer laps is authoritative at the
+    # record-derived boundaries. Approximate laps and workout laps are not.
+    for lap in activity.laps[:kilometer]:
+        if lap.total_distance_m != _KILOMETER_DISTANCE_M:
+            return record_duration_s
+    lap_duration_s = activity.laps[kilometer - 1].total_timer_time_s
+    if (
+        lap_duration_s is None
+        or not isfinite(lap_duration_s)
+        or not 0 < lap_duration_s <= record_duration_s
+    ):
+        return record_duration_s
+    return lap_duration_s
 
 
 def _resolve_start_time(activity: Activity) -> datetime | None:

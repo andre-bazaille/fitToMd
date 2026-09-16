@@ -1223,7 +1223,7 @@ def test_dem_gap_preserves_fit_altitude_and_grade() -> None:
     )
 
     assert [record.altitude_m for record in enriched] == [10.0, 100.0, 30.0]
-    assert [record.grade_percent for record in enriched] == [None, 7.0, None]
+    assert enriched is records
 
 
 def test_dem_gap_does_not_interpolate_on_either_side_of_missing_sample() -> None:
@@ -1246,13 +1246,7 @@ def test_dem_gap_does_not_interpolate_on_either_side_of_missing_sample() -> None
         70.0,
         30.0,
     ]
-    assert [record.grade_percent for record in enriched] == [
-        None,
-        7.0,
-        7.0,
-        7.0,
-        None,
-    ]
+    assert enriched is records
 
 
 def test_dem_failed_middle_batch_preserves_uncovered_fit_values() -> None:
@@ -1302,7 +1296,7 @@ def test_dem_missing_endpoints_preserve_fit_altitude() -> None:
     assert [record.altitude_m for record in enriched] == [50.0, 11.0, 12.0, 80.0]
 
 
-def test_isolated_dem_sample_replaces_only_its_exact_record() -> None:
+def test_isolated_dem_sample_preserves_all_fit_records() -> None:
     records = _elevation_records(
         distances_m=(0.0, 50.0, 100.0, 150.0, 200.0),
         altitudes_m=(50.0, 55.0, 60.0, 65.0, 70.0),
@@ -1318,10 +1312,11 @@ def test_isolated_dem_sample_replaces_only_its_exact_record() -> None:
     assert [record.altitude_m for record in enriched] == [
         50.0,
         55.0,
-        12.0,
+        60.0,
         65.0,
         70.0,
     ]
+    assert enriched is records
 
 
 def test_dem_contiguous_coverage_interpolates_between_samples() -> None:
@@ -1497,3 +1492,124 @@ def _record_profile(seconds: int) -> tuple[float, float, float]:
         return 1000 + (progress * 1000), 10 - (progress * 5), 1000 / 300
     progress = (seconds - 600) / 120
     return 2000 + (progress * 100), 5 + (progress * 3), 100 / 120
+
+
+@pytest.mark.parametrize("with_timer_events", [False, True])
+def test_aligned_lap_timing_excludes_pause_and_places_finish_sample(
+    with_timer_events: bool,
+) -> None:
+    from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
+
+    start = datetime(2026, 9, 16, 12)
+    frames = [
+        FakeFrame(
+            "record",
+            {
+                "timestamp": start + timedelta(seconds=seconds),
+                "distance": distance,
+                "heart_rate": heart_rate,
+            },
+        )
+        for seconds, distance, heart_rate in (
+            (0, 0, 120),
+            (300, 1000, 140),
+            (400, 1000, 100),
+            (700, 2000, 160),
+        )
+    ]
+    frames.extend(
+        [
+            FakeFrame("lap", {"total_distance": 1000, "total_timer_time": 300}),
+            FakeFrame("lap", {"total_distance": 1000, "total_timer_time": 300}),
+            FakeFrame(
+                "session",
+                {
+                    "start_time": start,
+                    "timestamp": start + timedelta(seconds=700),
+                    "sport": "running",
+                    "total_distance": 2000,
+                    "total_timer_time": 600,
+                    "total_elapsed_time": 700,
+                },
+            ),
+        ]
+    )
+    if with_timer_events:
+        frames.extend(
+            FakeFrame(
+                "event",
+                {
+                    "timestamp": start + timedelta(seconds=seconds),
+                    "event": "timer",
+                    "event_type": event_type,
+                },
+            )
+            for seconds, event_type in (
+                (0, "start"),
+                (300, "stop"),
+                (400, "start"),
+                (700, "stop"),
+            )
+        )
+    extractor = FitdecodeActivityExtractor(reader_factory=lambda _: FakeReader(frames))
+    activity = extractor._parse_activity(Path("pause.fit"))
+    assert activity.has_active_record_timing is with_timer_events
+    report = extractor.extract(Path("pause.fit"))
+    assert [split.time_seconds for split in report.splits] == [300, 300]
+    assert [split.pace_seconds_per_km for split in report.splits] == [300, 300]
+    assert report.summary.total_timer_time_s == 600
+    assert report.summary.total_elapsed_time_s == 700
+    dynamics = report.transitions[1]
+    assert dynamics.samples[-1].elapsed_seconds == 300
+    assert dynamics.samples[-1].heart_rate_bpm == 160
+    if with_timer_events:
+        assert dynamics.sampling_note is None
+        assert len(dynamics.samples) > 2
+    else:
+        assert [sample.elapsed_seconds for sample in dynamics.samples] == [0, 300]
+        assert dynamics.sampling_note is not None
+        assert dynamics.sampling_note in MarkdownReportRenderer().render(report)
+
+
+@pytest.mark.parametrize("elevations", [(None, 0.0, None), (0.0, None, 0.0)])
+def test_isolated_dem_results_do_not_create_ascent_or_grade(
+    elevations: tuple[float | None, ...],
+) -> None:
+    from dataclasses import replace
+
+    from fit_to_md.domain.activity.entities import Activity
+
+    records = tuple(
+        replace(record, grade_percent=None)
+        for record in _elevation_records(
+            distances_m=tuple(float(i * 50) for i in range(21)),
+            altitudes_m=(100.0,) * 21,
+        )
+    )
+    enriched = _replace_record_altitudes_from_dem(
+        records, StubElevationProvider(elevations), "dem", 500.0
+    )
+    assert enriched is records
+    activity = Activity(records=enriched)
+    summary = SessionSummaryBuilder().build(activity)
+    assert summary.total_ascent_m == 0
+    assert summary.total_descent_m == 0
+    dynamics = TransitionBuilder().build(activity)
+    assert dynamics
+    assert all(
+        sample.grade_percent in (None, 0.0)
+        for transition in dynamics
+        for sample in transition.samples
+    )
+
+
+def test_dem_ignores_isolated_sample_beside_valid_coverage() -> None:
+    records = _elevation_records(
+        distances_m=(0.0, 100.0, 200.0, 300.0),
+        altitudes_m=(100.0,) * 4,
+    )
+    enriched = _replace_record_altitudes_from_dem(
+        records, StubElevationProvider((10.0, 20.0, None, 0.0)), "dem", 100.0
+    )
+    assert [record.altitude_m for record in enriched] == [10.0, 20.0, 100.0, 100.0]
+    assert enriched[2:] == records[2:]

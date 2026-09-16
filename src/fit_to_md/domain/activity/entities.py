@@ -62,3 +62,5 @@ class Activity:
     sub_sport: str | None = None
     laps: tuple[ActivityLap, ...] = field(default_factory=tuple)
     records: tuple[ActivityRecord, ...] = field(default_factory=tuple)
+    # True when record elapsed times exclude pauses, rather than using wall time.
+    has_active_record_timing: bool = False

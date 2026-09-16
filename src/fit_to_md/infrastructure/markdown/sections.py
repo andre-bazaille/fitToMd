@@ -87,6 +87,8 @@ class TransitionSectionRenderer:
         self, transition: TransitionDynamics, sport: str | None
     ) -> list[str]:
         lines = [f"- **{transition.label}**"]
+        if transition.sampling_note:
+            lines.append(f"  - {transition.sampling_note}")
         for sample in transition.samples:
             lines.append(self._render_transition_sample(sample, sport))
         return lines

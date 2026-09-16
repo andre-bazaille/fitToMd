@@ -1,5 +1,11 @@
 ## 2026-09-16
 
+- Preserved active durations from exactly aligned kilometer laps when record
+  timing falls back to wall time; dynamics now disclose unknown pause timing and
+  show boundary samples instead of assigning misleading intermediate times.
+- Required contiguous DEM coverage before replacing altitude, retaining FIT
+  altitude and grade for isolated terrain samples and preventing artificial
+  ascent/descent from single-point source changes.
 - Corrected missing session start times to prefer the earliest activity record,
   then derive from the session finish and elapsed duration before using the finish
   as a last resort.

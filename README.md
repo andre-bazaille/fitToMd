@@ -236,7 +236,9 @@ linearly interpolated every 25 m by default. OpenTopoData uses bilinear raster
 interpolation for those samples, and returned elevations are interpolated back
 onto the FIT records by distance. Interpolation occurs only between adjacent
 successful DEM samples. If a sample or request batch has no elevation data, the
-original FIT altitude is retained throughout that uncovered interval.
+original FIT altitude is retained throughout that uncovered interval. Isolated
+successful samples are ignored: replacement requires at least two adjacent valid
+DEM samples.
 
 Change the spacing with `--dem-sample-distance`:
 
@@ -306,7 +308,10 @@ fit-to-md activity.fit --dynamics-step-size 10
 
 Smaller intervals increase detail and report size; larger intervals reduce both.
 The kilometer start and finish are included even when they do not fall exactly
-on the requested interval. `--transition-sample-interval` remains available as
+on the requested interval. When timer events are missing, exactly aligned
+one-kilometer laps can supply active durations. If those totals reveal a pause
+whose location is unknown, dynamics show only boundary samples with an explanatory
+note; intermediate measurements cannot be assigned reliable active times. `--transition-sample-interval` remains available as
 a compatibility alias.
 
 ## Weather enrichment

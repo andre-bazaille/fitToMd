@@ -336,3 +336,32 @@ def _lap(index: int, distance_m: float, timer_time_s: float) -> ActivityLap:
         min_temperature_c=None,
         max_temperature_c=None,
     )
+
+
+@pytest.mark.parametrize(
+    ("distances", "active_timing", "lap_duration"),
+    [
+        ((250.0, 1000.0), False, 100.0),
+        ((990.0, 1010.0), False, 100.0),
+        ((1000.0, 1000.0), True, 100.0),
+        ((1000.0, 1000.0), False, -1.0),
+        ((1000.0, 1000.0), False, float("nan")),
+        ((1000.0, 1000.0), False, 500.0),
+    ],
+)
+def test_lap_timing_fallback_rejects_untrusted_laps(
+    distances: tuple[float, float],
+    active_timing: bool,
+    lap_duration: float,
+) -> None:
+    start = datetime(2026, 9, 16, 12)
+    activity = Activity(
+        has_active_record_timing=active_timing,
+        records=tuple(
+            _record(start + timedelta(seconds=i * 300), i * 300, i * 1000, 10, 120)
+            for i in range(3)
+        ),
+        laps=tuple(_lap(i, d, lap_duration) for i, d in enumerate(distances, start=1)),
+    )
+    assert [s.time_seconds for s in SplitBuilder().build(activity)] == [300, 300]
+    assert all(t.sampling_note is None for t in TransitionBuilder().build(activity))
