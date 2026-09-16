@@ -16,6 +16,8 @@ _MIN_ELEVATION_CHANGE_M = 0.4
 _MIN_ELEVATION_SMOOTHING_WINDOW = 3
 _MAX_ELEVATION_SMOOTHING_WINDOW = 51
 _TRANSITION_GRADE_DISTANCE_M = 200.0
+_KILOMETER_DISTANCE_M = 1000.0
+_KILOMETER_ALIGNMENT_TOLERANCE_M = 25.0
 
 
 @dataclass(frozen=True)
@@ -153,19 +155,12 @@ class SplitBuilder:
         activity: Activity,
         prefer_records: bool = False,
     ) -> tuple[Split, ...]:
-        if prefer_records:
-            record_splits = self._build_from_records(activity.records)
-            if record_splits:
-                return tuple(record_splits)
-
-        kilometer_laps = _resolve_kilometer_laps(activity.laps, activity.records)
-        if kilometer_laps:
-            return tuple(self._build_from_laps(kilometer_laps))
-
         record_splits = self._build_from_records(activity.records)
         if record_splits:
             return tuple(record_splits)
-        return tuple(self._build_from_laps(activity.laps))
+
+        kilometer_laps = _resolve_aligned_kilometer_laps(activity.laps)
+        return tuple(self._build_from_laps(kilometer_laps))
 
     def _build_from_records(self, records: tuple[ActivityRecord, ...]) -> list[Split]:
         distance_records = [
@@ -237,7 +232,7 @@ class SplitBuilder:
 
     def _build_from_laps(self, laps: tuple[ActivityLap, ...]) -> list[Split]:
         splits: list[Split] = []
-        for lap in laps:
+        for kilometer, lap in enumerate(laps, start=1):
             pace_seconds_per_km = None
             if lap.total_timer_time_s is not None and lap.total_distance_m not in (
                 None,
@@ -255,7 +250,7 @@ class SplitBuilder:
 
             splits.append(
                 Split(
-                    kilometer=lap.index,
+                    kilometer=kilometer,
                     time_seconds=lap.total_timer_time_s,
                     pace_seconds_per_km=pace_seconds_per_km,
                     elevation_delta_m=elevation_delta_m,
@@ -303,17 +298,6 @@ class TransitionBuilder:
         if completed_kilometers < 1:
             return tuple()
 
-        kilometer_laps = _resolve_kilometer_laps(activity.laps, activity.records)
-        kilometer_lap_durations = tuple(
-            lap.total_timer_time_s
-            for lap in kilometer_laps
-            if lap.total_timer_time_s is not None
-        )
-        use_kilometer_lap_durations = (
-            len(kilometer_lap_durations) == completed_kilometers
-        )
-        cumulative_elapsed_time_s = 0.0
-
         smoothed_altitude_profile = _build_smoothed_altitude_profile(
             activity.records,
             elevation_smoothing_distance_m=self._elevation_smoothing_distance_m,
@@ -335,10 +319,7 @@ class TransitionBuilder:
                 continue
 
             start_boundary = boundaries[-1]
-            if use_kilometer_lap_durations:
-                duration_s = kilometer_lap_durations[kilometer - 1]
-            else:
-                duration_s = _resolve_boundary_duration_s(start_boundary, end_boundary)
+            duration_s = _resolve_boundary_duration_s(start_boundary, end_boundary)
             if duration_s <= 0:
                 boundaries.append(end_boundary)
                 continue
@@ -347,17 +328,11 @@ class TransitionBuilder:
             for elapsed_seconds in _build_elapsed_samples(
                 duration_s, self._sample_interval_s
             ):
-                if use_kilometer_lap_durations:
-                    record = _interpolate_record_at_elapsed_time(
-                        activity.records,
-                        cumulative_elapsed_time_s + elapsed_seconds,
-                    )
-                else:
-                    record = _interpolate_record_within_boundary_window(
-                        records=activity.records,
-                        start_boundary=start_boundary,
-                        elapsed_seconds=elapsed_seconds,
-                    )
+                record = _interpolate_record_within_boundary_window(
+                    records=activity.records,
+                    start_boundary=start_boundary,
+                    elapsed_seconds=elapsed_seconds,
+                )
                 if record is None:
                     continue
 
@@ -386,42 +361,40 @@ class TransitionBuilder:
                     )
                 )
             boundaries.append(end_boundary)
-            if use_kilometer_lap_durations:
-                cumulative_elapsed_time_s += duration_s
 
         return tuple(transitions)
 
 
-def _resolve_kilometer_laps(
+def _resolve_aligned_kilometer_laps(
     laps: tuple[ActivityLap, ...],
-    records: tuple[ActivityRecord, ...],
 ) -> tuple[ActivityLap, ...]:
-    if not laps:
-        return tuple()
+    aligned_laps: list[ActivityLap] = []
+    cumulative_distance_m = 0.0
 
-    kilometer_laps = tuple(lap for lap in laps if _is_kilometer_lap(lap))
-    if not kilometer_laps:
-        return tuple()
+    for kilometer, lap in enumerate(laps, start=1):
+        if not _is_kilometer_lap(lap):
+            break
 
-    distance_records = [record for record in records if record.distance_m is not None]
-    if len(distance_records) < 2:
-        return kilometer_laps
+        assert lap.total_distance_m is not None
+        cumulative_distance_m += lap.total_distance_m
+        expected_boundary_m = kilometer * _KILOMETER_DISTANCE_M
+        if (
+            abs(cumulative_distance_m - expected_boundary_m)
+            > _KILOMETER_ALIGNMENT_TOLERANCE_M
+        ):
+            break
+        aligned_laps.append(lap)
 
-    origin_distance_m = distance_records[0].distance_m or 0.0
-    final_distance_m = distance_records[-1].distance_m or origin_distance_m
-    completed_kilometers = _count_completed_kilometers(
-        origin_distance_m, final_distance_m
-    )
-    if completed_kilometers < 1 or len(kilometer_laps) < completed_kilometers:
-        return tuple()
-
-    return kilometer_laps[:completed_kilometers]
+    return tuple(aligned_laps)
 
 
 def _is_kilometer_lap(lap: ActivityLap) -> bool:
     if lap.total_timer_time_s is None or lap.total_distance_m is None:
         return False
-    return abs(lap.total_distance_m - 1000.0) <= 25.0
+    return (
+        abs(lap.total_distance_m - _KILOMETER_DISTANCE_M)
+        <= _KILOMETER_ALIGNMENT_TOLERANCE_M
+    )
 
 
 def _count_completed_kilometers(

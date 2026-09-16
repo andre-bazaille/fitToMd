@@ -161,9 +161,9 @@ def test_extractor_excludes_paused_time_from_real_fit_split_and_transition_durat
 ) -> None:
     report = decoded_fit_files["0004.fit"].report
 
-    assert report.splits[1].time_seconds == pytest.approx(370.829, abs=0.05)
+    assert report.splits[1].time_seconds == pytest.approx(371.043, abs=0.05)
     assert report.transitions[1].samples[-1].elapsed_seconds == pytest.approx(
-        370.829, abs=0.05
+        report.splits[1].time_seconds, abs=0.05
     )
 
 

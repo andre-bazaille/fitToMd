@@ -1,5 +1,8 @@
 ## 2026-09-16
 
+- Corrected kilometer splits and dynamics to use the same record-derived distance
+  boundaries, preventing warm-up, recovery, manual, and sub-kilometer laps from
+  being mislabeled as absolute kilometers while retaining aligned lap-only fallback.
 - Rejected multi-session FIT activities with a clear unsupported-input error
   instead of combining session summaries with laps, records, and timer events from
   different sessions.
