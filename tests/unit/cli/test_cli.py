@@ -557,6 +557,33 @@ def test_run_returns_friendly_error_for_invalid_fit_file(tmp_path: Path) -> None
     assert not fit_file.with_suffix(".md").exists()
 
 
+def test_run_returns_friendly_error_for_multiple_sessions(tmp_path: Path) -> None:
+    fit_file = tmp_path / "multisport.fit"
+    fit_file.write_bytes(b"FIT")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    class MultipleSessionGenerator:
+        def execute(self, source: Path) -> str:
+            raise NotImplementedError(
+                "FIT files with multiple sessions are not supported."
+            )
+
+    exit_code = run(
+        argv=[str(fit_file)],
+        report_generator=MultipleSessionGenerator(),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert stdout.getvalue() == ""
+    assert stderr.getvalue() == (
+        "FIT files with multiple sessions are not supported.\n"
+    )
+    assert not fit_file.with_suffix(".md").exists()
+
+
 def test_run_returns_friendly_error_when_input_cannot_be_read(tmp_path: Path) -> None:
     fit_file = tmp_path / "activity.fit"
     fit_file.write_bytes(b"FIT")

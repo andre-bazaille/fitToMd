@@ -1,5 +1,8 @@
 ## 2026-09-16
 
+- Rejected multi-session FIT activities with a clear unsupported-input error
+  instead of combining session summaries with laps, records, and timer events from
+  different sessions.
 - Prevented report output paths from overwriting their source FIT file, including
   relative or absolute path aliases, symbolic links, and hard links.
 - Added `--output-by-activity-time` to name generated Markdown files from the

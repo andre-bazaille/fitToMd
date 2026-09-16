@@ -141,6 +141,7 @@ class FitdecodeActivityExtractor:
 
     def _parse_activity(self, source: Path) -> Activity:
         session_values: dict[str, object] = {}
+        session_count = 0
         laps: list[ActivityLap] = []
         records: list[ActivityRecord] = []
         timer_events: list[_TimerEvent] = []
@@ -153,6 +154,11 @@ class FitdecodeActivityExtractor:
                     continue
 
                 if frame.name == "session":
+                    session_count += 1
+                    if session_count > 1:
+                        raise NotImplementedError(
+                            "FIT files with multiple sessions are not supported."
+                        )
                     session_values = _extract_message_values(frame)
                 elif frame.name == "sport":
                     values = _extract_message_values(frame)

@@ -138,6 +138,100 @@ def test_extractor_builds_summary_splits_and_transitions() -> None:
     assert report.transitions[0].samples[10].speed_kmh == pytest.approx(12.0, abs=0.1)
 
 
+def test_extractor_rejects_multiple_sessions_instead_of_combining_them() -> None:
+    start = datetime(2026, 3, 29, 6, 0, 0)
+    frames = [
+        FakeFrame("sport", {"sport": "cycling"}),
+        FakeFrame(
+            "event",
+            {"timestamp": start, "event": "timer", "event_type": "start"},
+        ),
+        FakeFrame("record", {"timestamp": start, "distance": 0.0}),
+        FakeFrame(
+            "record",
+            {"timestamp": start + timedelta(seconds=100), "distance": 1000.0},
+        ),
+        FakeFrame(
+            "event",
+            {
+                "timestamp": start + timedelta(seconds=100),
+                "event": "timer",
+                "event_type": "stop_all",
+            },
+        ),
+        FakeFrame(
+            "lap",
+            {
+                "start_time": start,
+                "timestamp": start + timedelta(seconds=100),
+                "total_distance": 1000.0,
+                "total_timer_time": 100.0,
+            },
+        ),
+        FakeFrame(
+            "session",
+            {
+                "sport": "cycling",
+                "start_time": start,
+                "timestamp": start + timedelta(seconds=100),
+                "total_distance": 1000.0,
+                "total_timer_time": 100.0,
+            },
+        ),
+        FakeFrame("sport", {"sport": "running"}),
+        FakeFrame(
+            "event",
+            {
+                "timestamp": start + timedelta(seconds=200),
+                "event": "timer",
+                "event_type": "start",
+            },
+        ),
+        FakeFrame(
+            "record",
+            {"timestamp": start + timedelta(seconds=200), "distance": 0.0},
+        ),
+        FakeFrame(
+            "record",
+            {"timestamp": start + timedelta(seconds=800), "distance": 2000.0},
+        ),
+        FakeFrame(
+            "event",
+            {
+                "timestamp": start + timedelta(seconds=800),
+                "event": "timer",
+                "event_type": "stop_all",
+            },
+        ),
+        FakeFrame(
+            "lap",
+            {
+                "start_time": start + timedelta(seconds=200),
+                "timestamp": start + timedelta(seconds=800),
+                "total_distance": 2000.0,
+                "total_timer_time": 600.0,
+            },
+        ),
+        FakeFrame(
+            "session",
+            {
+                "sport": "running",
+                "start_time": start + timedelta(seconds=200),
+                "timestamp": start + timedelta(seconds=800),
+                "total_distance": 2000.0,
+                "total_timer_time": 600.0,
+            },
+        ),
+    ]
+    extractor = FitdecodeActivityExtractor(reader_factory=lambda _: FakeReader(frames))
+
+    with pytest.raises(
+        NotImplementedError,
+        match="FIT files with multiple sessions are not supported",
+    ):
+        extractor.extract(Path("multisport.fit"))
+
+
 def test_extractor_builds_kilometer_transitions_without_laps() -> None:
     start = datetime(2026, 3, 29, 6, 0, 0)
     frames = [
