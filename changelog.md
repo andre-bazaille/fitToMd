@@ -1,3 +1,8 @@
+## 2026-09-16
+
+- Added `--output-by-activity-time` to name generated Markdown files from the
+  activity start time using the `YYYY-MM-DD HH:MM` format.
+
 ## 2026-09-02
 
 - Reworked the public README with source installation and usage guidance,

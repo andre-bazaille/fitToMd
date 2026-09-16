@@ -1,6 +1,7 @@
 import argparse
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
@@ -18,6 +19,7 @@ from fit_to_md.infrastructure.weather import OpenMeteoHistoricalWeatherProvider
 
 CONFIGURABLE_OPTIONS = (
     "output",
+    "output-by-activity-time",
     "dynamics-step-size",
     "weather-mode",
     "elevation-smoothing-distance",
@@ -27,6 +29,9 @@ CONFIGURABLE_OPTIONS = (
     "opentopodata-dataset",
     "opentopodata-base-url",
 )
+_BOOLEAN_CONFIG_OPTIONS = frozenset(("output-by-activity-time",))
+_TRUE_CONFIG_VALUES = frozenset(("1", "true", "yes", "on"))
+_FALSE_CONFIG_VALUES = frozenset(("0", "false", "no", "off"))
 
 
 def _positive_int(value: str) -> int:
@@ -66,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         help="Optional path for the generated Markdown file; defaults to the input file with a .md suffix.",
+    )
+    parser.add_argument(
+        "--output-by-activity-time",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Name the default output file from the activity start time as 'YYYY-MM-DD HH:MM.md'.",
     )
     parser.add_argument(
         "--dynamics-step-size",
@@ -177,8 +188,6 @@ def run(
         print(f"Input path is not a file: {input_path}", file=stderr)
         return 2
 
-    output_path = args.output or input_path.with_suffix(".md")
-
     generator = report_generator or build_default_generator(
         dynamics_step_size=args.dynamics_step_size,
         weather_mode=args.weather_mode,
@@ -192,7 +201,14 @@ def run(
     _configure_elevation_progress(generator, stderr)
 
     try:
-        markdown = generator.execute(input_path)
+        if args.output_by_activity_time and args.output is None:
+            report, markdown = generator.execute_with_report(input_path)
+            output_path = _output_path_from_activity_time(
+                input_path, report.summary.start_time
+            )
+        else:
+            markdown = generator.execute(input_path)
+            output_path = args.output or input_path.with_suffix(".md")
     except fitdecode.FitError as error:
         print(f"Invalid FIT file: {input_path}: {error}", file=stderr)
         return 1
@@ -216,6 +232,16 @@ def run(
     return 0
 
 
+def _output_path_from_activity_time(
+    input_path: Path, start_time: datetime | None
+) -> Path:
+    if start_time is None:
+        raise RuntimeError(
+            "Activity start time unavailable; cannot use activity time for output name."
+        )
+    return input_path.with_name(f"{start_time.strftime('%Y-%m-%d %H:%M')}.md")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     return run(argv=argv)
 
@@ -235,11 +261,18 @@ def _arguments_with_config_defaults(
     except ConfigFileError as error:
         parser.error(str(error))
 
-    defaults = [
-        argument
-        for option, value in configured_options.items()
-        for argument in (f"--{option}", value)
-    ]
+    defaults: list[str] = []
+    for option, value in configured_options.items():
+        if option in _BOOLEAN_CONFIG_OPTIONS:
+            normalized_value = value.casefold()
+            if normalized_value in _TRUE_CONFIG_VALUES:
+                defaults.append(f"--{option}")
+            elif normalized_value in _FALSE_CONFIG_VALUES:
+                defaults.append(f"--no-{option}")
+            else:
+                parser.error(f"invalid boolean value {value!r} for option {option!r}")
+        else:
+            defaults.extend((f"--{option}", value))
     return [*defaults, *command_line]
 
 

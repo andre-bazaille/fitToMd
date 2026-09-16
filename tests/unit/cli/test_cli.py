@@ -1,10 +1,12 @@
 import io
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 import fit_to_md.cli as cli
 from fit_to_md.cli import build_default_generator, build_parser, run
+from fit_to_md.domain.reporting.entities import FitReport, SessionSummary
 from fit_to_md.infrastructure.weather import OpenMeteoHistoricalWeatherProvider
 
 
@@ -16,6 +18,16 @@ class StubGenerator:
     def execute(self, source: Path) -> str:
         self.calls.append(source)
         return self.markdown
+
+
+class StubGeneratorWithReport(StubGenerator):
+    def __init__(self, markdown: str, report: FitReport) -> None:
+        super().__init__(markdown)
+        self.report = report
+
+    def execute_with_report(self, source: Path) -> tuple[FitReport, str]:
+        self.calls.append(source)
+        return self.report, self.markdown
 
 
 class StubElevationProvider:
@@ -60,6 +72,53 @@ def test_run_writes_markdown_to_default_output_file(tmp_path: Path) -> None:
     assert stderr.getvalue() == ""
     assert generator.calls == [fit_file]
     assert expected_output.read_text(encoding="utf-8") == "# FIT Report\n"
+
+
+def test_run_can_name_output_from_activity_start_time(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    generator = StubGeneratorWithReport(
+        "# FIT Report\n", _report_with_start_time(datetime(2026, 9, 16, 7, 5, 59))
+    )
+    expected_output = tmp_path / "2026-09-16 07:05.md"
+
+    exit_code = run(
+        argv=[str(fit_file), "--output-by-activity-time"],
+        report_generator=generator,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    assert stdout.getvalue() == "# FIT Report\n"
+    assert stderr.getvalue() == ""
+    assert generator.calls == [fit_file]
+    assert expected_output.read_text(encoding="utf-8") == "# FIT Report\n"
+    assert not fit_file.with_suffix(".md").exists()
+
+
+def test_run_rejects_activity_time_output_without_activity_start_time(
+    tmp_path: Path,
+) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    generator = StubGeneratorWithReport("# FIT Report\n", _report_with_start_time(None))
+
+    exit_code = run(
+        argv=[str(fit_file), "--output-by-activity-time"],
+        report_generator=generator,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert stdout.getvalue() == ""
+    assert "Activity start time unavailable" in stderr.getvalue()
+    assert not fit_file.with_suffix(".md").exists()
 
 
 def test_run_reports_elevation_api_usage_to_stderr(tmp_path: Path) -> None:
@@ -299,6 +358,40 @@ def test_run_loads_default_options_from_config_file(
     assert calls == [(8, "auto", "hybrid")]
 
 
+def test_run_loads_activity_time_output_option_from_config_file(
+    tmp_path: Path,
+) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    config_file = tmp_path / ".config"
+    config_file.write_text("output-by-activity-time = true\n", encoding="utf-8")
+    generator = StubGeneratorWithReport(
+        "# FIT Report\n", _report_with_start_time(datetime(2026, 9, 16, 7, 5))
+    )
+
+    exit_code = run(
+        argv=[str(fit_file), "--config", str(config_file)],
+        report_generator=generator,
+    )
+
+    assert exit_code == 0
+    assert (tmp_path / "2026-09-16 07:05.md").exists()
+
+
+def test_run_rejects_invalid_boolean_output_option_from_config_file(
+    tmp_path: Path,
+) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    config_file = tmp_path / ".config"
+    config_file.write_text("output-by-activity-time = sometimes\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as error:
+        run(argv=[str(fit_file), "--config", str(config_file)])
+
+    assert error.value.code == 2
+
+
 def test_explicit_command_line_option_overrides_config_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -420,3 +513,25 @@ def test_run_returns_error_for_runtime_limit_failure(tmp_path: Path) -> None:
     assert exit_code == 1
     assert stdout.getvalue() == ""
     assert "OpenTopoData public API limit exceeded" in stderr.getvalue()
+
+
+def _report_with_start_time(start_time: datetime | None) -> FitReport:
+    return FitReport(
+        summary=SessionSummary(
+            start_time=start_time,
+            activity_name="Running",
+            activity_type="running",
+            total_distance_km=None,
+            total_timer_time_s=None,
+            total_elapsed_time_s=None,
+            total_ascent_m=None,
+            total_descent_m=None,
+            avg_heart_rate_bpm=None,
+            max_heart_rate_bpm=None,
+            avg_cadence_spm=None,
+            avg_speed_kmh=None,
+            avg_temperature_c=None,
+            min_temperature_c=None,
+            max_temperature_c=None,
+        )
+    )

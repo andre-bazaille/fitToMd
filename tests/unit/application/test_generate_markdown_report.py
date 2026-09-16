@@ -54,3 +54,35 @@ def test_generate_markdown_report_delegates_to_ports() -> None:
     assert result == "rendered markdown"
     assert extractor.calls == [Path("activity.fit")]
     assert renderer.calls == [report]
+
+
+def test_generate_markdown_report_can_return_report_for_output_naming() -> None:
+    report = FitReport(
+        summary=SessionSummary(
+            start_time=None,
+            activity_name="Morning Run",
+            activity_type="running",
+            total_distance_km=10.0,
+            total_timer_time_s=3000.0,
+            total_elapsed_time_s=3050.0,
+            total_ascent_m=100.0,
+            total_descent_m=95.0,
+            avg_heart_rate_bpm=145,
+            max_heart_rate_bpm=172,
+            avg_cadence_spm=170,
+            avg_speed_kmh=12.0,
+            avg_temperature_c=18.0,
+            min_temperature_c=14.0,
+            max_temperature_c=21.0,
+        )
+    )
+    extractor = StubExtractor(report)
+    renderer = StubRenderer()
+    use_case = GenerateMarkdownReport(extractor=extractor, renderer=renderer)
+
+    result_report, result_markdown = use_case.execute_with_report(Path("activity.fit"))
+
+    assert result_report is report
+    assert result_markdown == "rendered markdown"
+    assert extractor.calls == [Path("activity.fit")]
+    assert renderer.calls == [report]

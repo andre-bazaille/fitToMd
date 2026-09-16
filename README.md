@@ -58,6 +58,17 @@ standard output. Use `--output` to select a different destination:
 fit-to-md activity.fit --output reports/activity.md
 ```
 
+Use `--output-by-activity-time` to name the default output from the activity's
+start time, for example `2020-01-01 12:00.md`:
+
+```bash
+fit-to-md activity.fit --output-by-activity-time
+```
+
+The activity time uses the `YYYY-MM-DD HH:MM` format. An explicit `--output`
+path takes precedence. The activity must contain a usable start time for this
+option.
+
 `python -m fit_to_md` can be used instead of the `fit-to-md` command. Run
 `fit-to-md --help` for the complete CLI reference.
 
@@ -309,7 +320,8 @@ fit-to-md activity.fit --config ./fit-to-md.conf
 ```
 
 An option supplied directly on the command line overrides the same option in the
-file. Configurable options are `output`, `dynamics-step-size`, `weather-mode`,
+file. Configurable options are `output`, `output-by-activity-time`,
+`dynamics-step-size`, `weather-mode`,
 `elevation-smoothing-distance`, `elevation-min-change`, `elevation-source`,
 `dem-sample-distance`, `opentopodata-dataset`, and `opentopodata-base-url`.
 
