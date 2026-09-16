@@ -1,5 +1,8 @@
 ## 2026-09-16
 
+- Corrected missing session start times to prefer the earliest activity record,
+  then derive from the session finish and elapsed duration before using the finish
+  as a last resort.
 - Preserved the canonical parent sport in report summaries so running sub-sports,
   including treadmill, track, and trail running, consistently render pace rather
   than speed in session summaries and dynamics.

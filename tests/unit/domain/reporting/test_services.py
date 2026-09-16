@@ -3,7 +3,12 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from fit_to_md.domain.activity import Activity, ActivityLap, ActivityRecord
+from fit_to_md.domain.activity import (
+    Activity,
+    ActivityLap,
+    ActivityRecord,
+    ActivitySession,
+)
 from fit_to_md.domain.reporting.services import (
     SessionSummaryBuilder,
     SplitBuilder,
@@ -66,6 +71,78 @@ def test_summary_preserves_running_sport_when_displaying_sub_sport(
 
     assert summary.activity_type == expected_activity_type
     assert summary.sport == "running"
+
+
+def test_summary_prefers_explicit_session_start_time() -> None:
+    explicit_start = datetime(2026, 9, 16, 12, 0, 0)
+    activity = Activity(
+        session=ActivitySession(
+            start_time=explicit_start,
+            end_time=explicit_start + timedelta(seconds=100),
+            total_elapsed_time_s=100.0,
+        ),
+        records=(
+            _record(
+                explicit_start - timedelta(seconds=10),
+                0.0,
+                0.0,
+                10.0,
+                120,
+            ),
+        ),
+    )
+
+    assert SessionSummaryBuilder().build(activity).start_time == explicit_start
+
+
+def test_summary_uses_earliest_record_when_session_start_is_missing() -> None:
+    expected_start = datetime(2026, 9, 16, 12, 0, 0)
+    end_time = expected_start + timedelta(seconds=100)
+    activity = Activity(
+        session=ActivitySession(
+            end_time=end_time,
+            total_elapsed_time_s=50.0,
+        ),
+        records=(
+            _record(end_time, 100.0, 1000.0, 20.0, 140),
+            _record(expected_start, 0.0, 0.0, 10.0, 120),
+        ),
+    )
+
+    assert SessionSummaryBuilder().build(activity).start_time == expected_start
+
+
+def test_summary_derives_start_from_finish_and_elapsed_time_without_records() -> None:
+    end_time = datetime(2026, 9, 16, 12, 1, 40)
+    activity = Activity(
+        session=ActivitySession(end_time=end_time, total_elapsed_time_s=100.0)
+    )
+
+    assert SessionSummaryBuilder().build(activity).start_time == datetime(
+        2026, 9, 16, 12, 0, 0
+    )
+
+
+@pytest.mark.parametrize(
+    "elapsed_time_s",
+    (None, -1.0, float("nan"), float("inf"), float("-inf"), 1e300),
+)
+def test_summary_uses_finish_as_last_resort_for_unusable_elapsed_time(
+    elapsed_time_s: float | None,
+) -> None:
+    end_time = datetime(2026, 9, 16, 12, 1, 40)
+    activity = Activity(
+        session=ActivitySession(
+            end_time=end_time,
+            total_elapsed_time_s=elapsed_time_s,
+        )
+    )
+
+    assert SessionSummaryBuilder().build(activity).start_time == end_time
+
+
+def test_summary_has_no_start_without_temporal_context() -> None:
+    assert SessionSummaryBuilder().build(Activity()).start_time is None
 
 
 def test_reporting_uses_record_boundaries_instead_of_workout_laps() -> None:

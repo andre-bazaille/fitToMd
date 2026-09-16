@@ -55,9 +55,7 @@ class SessionSummaryBuilder:
 
     def build(self, activity: Activity) -> SessionSummary:
         session = activity.session
-        start_time = session.start_time or session.end_time
-        if start_time is None and activity.records:
-            start_time = activity.records[0].timestamp
+        start_time = _resolve_start_time(activity)
 
         activity_type = _resolve_activity_type(activity)
         total_distance_m = session.total_distance_m
@@ -375,6 +373,29 @@ class TransitionBuilder:
             boundaries.append(end_boundary)
 
         return tuple(transitions)
+
+
+def _resolve_start_time(activity: Activity) -> datetime | None:
+    session = activity.session
+    if session.start_time is not None:
+        return session.start_time
+
+    if activity.records:
+        return min(record.timestamp for record in activity.records)
+
+    elapsed_time_s = session.total_elapsed_time_s
+    if (
+        session.end_time is not None
+        and elapsed_time_s is not None
+        and isfinite(elapsed_time_s)
+        and elapsed_time_s >= 0
+    ):
+        try:
+            return session.end_time - timedelta(seconds=elapsed_time_s)
+        except OverflowError:
+            pass
+
+    return session.end_time
 
 
 def _resolve_aligned_kilometer_laps(

@@ -558,6 +558,50 @@ def test_extractor_derives_weather_summary_from_record_temperatures_when_session
     assert report.summary.max_temperature_c == pytest.approx(14.0)
 
 
+def test_extractor_uses_record_start_for_summary_and_weather_lookup() -> None:
+    start = datetime(2026, 9, 16, 12, 0, 0)
+    end = start + timedelta(seconds=100)
+    frames = [
+        FakeFrame(
+            "session",
+            {
+                "timestamp": end,
+                "start_position_lat": 583127603,
+                "start_position_long": 27357081,
+                "total_elapsed_time": 100.0,
+            },
+        ),
+        FakeFrame("record", {"timestamp": start, "distance": 0.0}),
+        FakeFrame("record", {"timestamp": end, "distance": 1000.0}),
+    ]
+
+    class RecordingWeatherProvider:
+        def __init__(self) -> None:
+            self.calls: list[tuple[datetime, datetime | None, float, float]] = []
+
+        def lookup(
+            self,
+            start_time: datetime,
+            end_time: datetime | None,
+            latitude_deg: float,
+            longitude_deg: float,
+        ) -> WeatherSummary | None:
+            self.calls.append((start_time, end_time, latitude_deg, longitude_deg))
+            return None
+
+    weather_provider = RecordingWeatherProvider()
+    report = FitdecodeActivityExtractor(
+        reader_factory=lambda _: FakeReader(frames),
+        weather_provider=weather_provider,
+    ).extract(Path("activity.fit"))
+
+    assert report.summary.start_time == start
+    assert len(weather_provider.calls) == 1
+    weather_start, weather_end, _, _ = weather_provider.calls[0]
+    assert weather_start == start
+    assert weather_end == end
+
+
 def test_extractor_enriches_missing_weather_from_provider() -> None:
     start = datetime(2026, 3, 29, 10, 0, 0)
     frames = [
