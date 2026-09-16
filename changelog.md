@@ -1,5 +1,7 @@
 ## 2026-09-16
 
+- Rejected NaN and infinite elevation settings at both CLI/config parsing and
+  programmatic construction boundaries, preventing conversion-time numeric errors.
 - Preserved FIT-native session, record, and lap temperatures in automatic weather
   mode, avoiding unnecessary historical lookups and replacement weather summaries.
 - Preserved FIT altitude across missing DEM samples and failed elevation request

@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from math import isfinite
 from pathlib import Path
 from typing import Any, cast
 
@@ -74,8 +75,11 @@ class FitdecodeActivityExtractor:
     ) -> None:
         if elevation_mode not in {"fit", "dem", "hybrid"}:
             raise ValueError("elevation_mode must be one of: fit, dem, hybrid")
-        if elevation_sample_distance_m <= 0:
-            raise ValueError("elevation_sample_distance_m must be positive")
+        if (
+            not isfinite(elevation_sample_distance_m)
+            or elevation_sample_distance_m <= 0
+        ):
+            raise ValueError("elevation_sample_distance_m must be finite and positive")
 
         self._reader_factory = reader_factory or fitdecode.FitReader
         self._summary_builder = summary_builder or SessionSummaryBuilder()

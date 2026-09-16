@@ -47,6 +47,20 @@ class FakeReader:
         return iter(self._frames)
 
 
+@pytest.mark.parametrize("invalid_value", (float("nan"), float("inf"), float("-inf")))
+def test_extractor_rejects_non_finite_elevation_sample_distance(
+    invalid_value: float,
+) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        FitdecodeActivityExtractor(elevation_sample_distance_m=invalid_value)
+
+
+def test_extractor_accepts_finite_elevation_sample_distance() -> None:
+    extractor = FitdecodeActivityExtractor(elevation_sample_distance_m=1.0)
+
+    assert extractor._elevation_sample_distance_m == 1.0
+
+
 def test_extractor_builds_summary_splits_and_transitions() -> None:
     start = datetime(2026, 3, 29, 6, 0, 0)
     frames = [

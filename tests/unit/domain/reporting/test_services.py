@@ -172,6 +172,33 @@ def test_reporting_services_reject_invalid_configuration(
         factory()
 
 
+@pytest.mark.parametrize("invalid_value", (float("nan"), float("inf"), float("-inf")))
+def test_reporting_services_reject_non_finite_float_configuration(
+    invalid_value: float,
+) -> None:
+    factories = (
+        lambda: SessionSummaryBuilder(elevation_smoothing_distance_m=invalid_value),
+        lambda: SessionSummaryBuilder(min_elevation_change_m=invalid_value),
+        lambda: TransitionBuilder(elevation_smoothing_distance_m=invalid_value),
+        lambda: TransitionBuilder(grade_distance_m=invalid_value),
+    )
+
+    for factory in factories:
+        with pytest.raises(ValueError, match="finite"):
+            factory()
+
+
+def test_reporting_services_accept_finite_float_configuration_boundaries() -> None:
+    SessionSummaryBuilder(
+        elevation_smoothing_distance_m=1.0,
+        min_elevation_change_m=0.0,
+    )
+    TransitionBuilder(
+        elevation_smoothing_distance_m=1.0,
+        grade_distance_m=1.0,
+    )
+
+
 def _record(
     timestamp: datetime,
     elapsed_time_s: float,

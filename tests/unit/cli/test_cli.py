@@ -891,6 +891,83 @@ def test_run_rejects_invalid_dem_sample_distance(tmp_path: Path) -> None:
     assert error.value.code == 2
 
 
+@pytest.mark.parametrize(
+    ("option", "value", "is_valid"),
+    (
+        ("elevation-smoothing-distance", "nan", False),
+        ("elevation-smoothing-distance", "inf", False),
+        ("elevation-smoothing-distance", "-inf", False),
+        ("elevation-smoothing-distance", "0", False),
+        ("elevation-smoothing-distance", "220", True),
+        ("elevation-min-change", "nan", False),
+        ("elevation-min-change", "inf", False),
+        ("elevation-min-change", "-inf", False),
+        ("elevation-min-change", "0", True),
+        ("elevation-min-change", "0.8", True),
+        ("dem-sample-distance", "nan", False),
+        ("dem-sample-distance", "inf", False),
+        ("dem-sample-distance", "-inf", False),
+        ("dem-sample-distance", "0", False),
+        ("dem-sample-distance", "25", True),
+    ),
+)
+def test_parser_validates_finite_float_options(
+    option: str,
+    value: str,
+    is_valid: bool,
+) -> None:
+    arguments = ["activity.fit", f"--{option}", value]
+
+    if not is_valid:
+        with pytest.raises(SystemExit) as error:
+            build_parser().parse_args(arguments)
+        assert error.value.code == 2
+        return
+
+    build_parser().parse_args(arguments)
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "is_valid"),
+    (
+        ("elevation-smoothing-distance", "nan", False),
+        ("elevation-smoothing-distance", "inf", False),
+        ("elevation-smoothing-distance", "-inf", False),
+        ("elevation-smoothing-distance", "0", False),
+        ("elevation-smoothing-distance", "220", True),
+        ("elevation-min-change", "nan", False),
+        ("elevation-min-change", "inf", False),
+        ("elevation-min-change", "-inf", False),
+        ("elevation-min-change", "0", True),
+        ("elevation-min-change", "0.8", True),
+        ("dem-sample-distance", "nan", False),
+        ("dem-sample-distance", "inf", False),
+        ("dem-sample-distance", "-inf", False),
+        ("dem-sample-distance", "0", False),
+        ("dem-sample-distance", "25", True),
+    ),
+)
+def test_config_file_validates_finite_float_options(
+    tmp_path: Path,
+    option: str,
+    value: str,
+    is_valid: bool,
+) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    config_file = tmp_path / ".config"
+    config_file.write_text(f"{option} = {value}\n", encoding="utf-8")
+    arguments = [str(fit_file), "--config", str(config_file)]
+
+    if not is_valid:
+        with pytest.raises(SystemExit) as error:
+            run(argv=arguments, report_generator=StubGenerator("# FIT Report\n"))
+        assert error.value.code == 2
+        return
+
+    assert run(argv=arguments, report_generator=StubGenerator("# FIT Report\n")) == 0
+
+
 def test_run_returns_error_for_runtime_limit_failure(tmp_path: Path) -> None:
     fit_file = tmp_path / "activity.fit"
     fit_file.write_bytes(b"FIT")

@@ -1,6 +1,7 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from math import isfinite
 from statistics import mean
 
 from fit_to_md.domain.activity.entities import Activity, ActivityLap, ActivityRecord
@@ -39,10 +40,15 @@ class SessionSummaryBuilder:
         elevation_smoothing_distance_m: float = _ELEVATION_SMOOTHING_DISTANCE_M,
         min_elevation_change_m: float = _MIN_ELEVATION_CHANGE_M,
     ) -> None:
-        if elevation_smoothing_distance_m <= 0:
-            raise ValueError("elevation_smoothing_distance_m must be positive")
-        if min_elevation_change_m < 0:
-            raise ValueError("min_elevation_change_m must be non-negative")
+        if (
+            not isfinite(elevation_smoothing_distance_m)
+            or elevation_smoothing_distance_m <= 0
+        ):
+            raise ValueError(
+                "elevation_smoothing_distance_m must be finite and positive"
+            )
+        if not isfinite(min_elevation_change_m) or min_elevation_change_m < 0:
+            raise ValueError("min_elevation_change_m must be finite and non-negative")
 
         self._elevation_smoothing_distance_m = elevation_smoothing_distance_m
         self._min_elevation_change_m = min_elevation_change_m
@@ -271,10 +277,15 @@ class TransitionBuilder:
     ) -> None:
         if sample_interval_s <= 0:
             raise ValueError("sample_interval_s must be positive")
-        if elevation_smoothing_distance_m <= 0:
-            raise ValueError("elevation_smoothing_distance_m must be positive")
-        if grade_distance_m <= 0:
-            raise ValueError("grade_distance_m must be positive")
+        if (
+            not isfinite(elevation_smoothing_distance_m)
+            or elevation_smoothing_distance_m <= 0
+        ):
+            raise ValueError(
+                "elevation_smoothing_distance_m must be finite and positive"
+            )
+        if not isfinite(grade_distance_m) or grade_distance_m <= 0:
+            raise ValueError("grade_distance_m must be finite and positive")
 
         self._sample_interval_s = sample_interval_s
         self._elevation_smoothing_distance_m = elevation_smoothing_distance_m
