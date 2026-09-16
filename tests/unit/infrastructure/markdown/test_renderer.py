@@ -184,6 +184,41 @@ def test_render_prefers_enriched_weather_summary() -> None:
     )
 
 
+def test_render_prefers_fit_temperature_when_both_weather_sources_are_present() -> None:
+    report = FitReport(
+        summary=SessionSummary(
+            start_time=datetime(2026, 3, 29, 6, 30, 0),
+            activity_name="Long Run",
+            activity_type="running",
+            total_distance_km=None,
+            total_timer_time_s=None,
+            total_elapsed_time_s=None,
+            total_ascent_m=None,
+            total_descent_m=None,
+            avg_heart_rate_bpm=None,
+            max_heart_rate_bpm=None,
+            avg_cadence_spm=None,
+            avg_speed_kmh=None,
+            avg_temperature_c=20.0,
+            min_temperature_c=None,
+            max_temperature_c=None,
+            weather=WeatherSummary(
+                source="historical",
+                temperature_c=5.0,
+                apparent_temperature_c=3.0,
+                condition_summary="Cloudy",
+                wind_speed_kmh=None,
+                wind_direction_label=None,
+            ),
+        )
+    )
+
+    markdown = MarkdownReportRenderer().render(report)
+
+    assert "- **Weather:** Avg 20.0C / Min - / Max - [fit]" in markdown
+    assert "[historical]" not in markdown
+
+
 def test_render_keeps_speed_units_for_non_running_activities() -> None:
     report = FitReport(
         summary=SessionSummary(

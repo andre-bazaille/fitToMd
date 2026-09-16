@@ -611,6 +611,76 @@ def test_extractor_enriches_missing_weather_from_provider() -> None:
     assert report.summary.weather.wind_direction_label == "SW"
 
 
+@pytest.mark.parametrize("temperature_source", ["session", "record", "lap"])
+def test_extractor_does_not_replace_fit_temperature_with_historical_weather(
+    temperature_source: str,
+) -> None:
+    start = datetime(2026, 3, 29, 10, 0, 0)
+    session_values: dict[str, object] = {
+        "start_time": start,
+        "timestamp": start + timedelta(seconds=300),
+        "start_position_lat": 583127603,
+        "start_position_long": 27357081,
+        "total_timer_time": 300.0,
+        "total_distance": 1000.0,
+    }
+    if temperature_source == "session":
+        session_values["avg_temperature"] = 20.0
+
+    frames = [FakeFrame("session", session_values)]
+    if temperature_source == "record":
+        frames.append(
+            FakeFrame(
+                "record",
+                {"timestamp": start, "distance": 0.0, "temperature": 20.0},
+            )
+        )
+    if temperature_source == "lap":
+        frames.append(
+            FakeFrame(
+                "lap",
+                {
+                    "start_time": start,
+                    "timestamp": start + timedelta(seconds=300),
+                    "total_distance": 1000.0,
+                    "total_timer_time": 300.0,
+                    "avg_temperature": 20.0,
+                },
+            )
+        )
+
+    class UnexpectedWeatherProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def lookup(
+            self,
+            start_time: datetime,
+            end_time: datetime | None,
+            latitude_deg: float,
+            longitude_deg: float,
+        ) -> WeatherSummary | None:
+            self.calls += 1
+            return WeatherSummary(
+                source="historical",
+                temperature_c=5.0,
+                apparent_temperature_c=None,
+                condition_summary=None,
+                wind_speed_kmh=None,
+                wind_direction_label=None,
+            )
+
+    weather_provider = UnexpectedWeatherProvider()
+    report = FitdecodeActivityExtractor(
+        reader_factory=lambda _: FakeReader(frames),
+        weather_provider=weather_provider,
+    ).extract(Path("activity.fit"))
+
+    assert weather_provider.calls == 0
+    assert report.summary.weather is None
+    assert report.summary.avg_temperature_c == pytest.approx(20.0)
+
+
 def test_extractor_derives_noise_resistant_elevation_gain_loss_from_records() -> None:
     start = datetime(2026, 3, 29, 8, 45, 0)
     frames = [

@@ -21,6 +21,18 @@ class SessionSummary:
     max_temperature_c: float | None
     weather: "WeatherSummary | None" = None
 
+    @property
+    def has_fit_temperature(self) -> bool:
+        """Return whether the activity contains any FIT-native temperature data."""
+        return any(
+            temperature is not None
+            for temperature in (
+                self.avg_temperature_c,
+                self.min_temperature_c,
+                self.max_temperature_c,
+            )
+        )
+
 
 @dataclass(frozen=True)
 class WeatherSummary:

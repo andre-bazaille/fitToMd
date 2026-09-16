@@ -1,5 +1,7 @@
 ## 2026-09-16
 
+- Preserved FIT-native session, record, and lap temperatures in automatic weather
+  mode, avoiding unnecessary historical lookups and replacement weather summaries.
 - Preserved FIT altitude across missing DEM samples and failed elevation request
   batches instead of interpolating invented terrain values through coverage gaps.
 - Corrected kilometer splits and dynamics to use the same record-derived distance

@@ -118,7 +118,11 @@ class FitdecodeActivityExtractor:
     def _enrich_summary_weather(
         self, summary: SessionSummary, activity: Activity
     ) -> SessionSummary:
-        if self._weather_provider is None or summary.weather is not None:
+        if (
+            self._weather_provider is None
+            or summary.weather is not None
+            or summary.has_fit_temperature
+        ):
             return summary
 
         start_time = summary.start_time

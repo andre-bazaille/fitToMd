@@ -147,6 +147,13 @@ def _uses_pace(activity_type: str | None) -> bool:
 
 
 def _format_weather(summary: SessionSummary) -> str:
+    if summary.has_fit_temperature:
+        return (
+            f"Avg {_format_temperature(summary.avg_temperature_c)} / "
+            f"Min {_format_temperature(summary.min_temperature_c)} / "
+            f"Max {_format_temperature(summary.max_temperature_c)} [fit]"
+        )
+
     if summary.weather is not None:
         parts = [
             _format_temperature(summary.weather.temperature_c),
@@ -164,17 +171,7 @@ def _format_weather(summary: SessionSummary) -> str:
             parts.append(wind_label)
         return ", ".join(parts) + f" [{summary.weather.source}]"
 
-    if (
-        summary.avg_temperature_c is None
-        and summary.min_temperature_c is None
-        and summary.max_temperature_c is None
-    ):
-        return "FIT and historical weather data unavailable"
-    return (
-        f"Avg {_format_temperature(summary.avg_temperature_c)} / "
-        f"Min {_format_temperature(summary.min_temperature_c)} / "
-        f"Max {_format_temperature(summary.max_temperature_c)} [fit]"
-    )
+    return "FIT and historical weather data unavailable"
 
 
 def _format_temperature(value: float | None) -> str:
