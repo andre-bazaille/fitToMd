@@ -259,6 +259,14 @@ def run(
         print(str(error), file=stderr)
         return 1
 
+    if _paths_refer_to_same_file(input_path, output_path):
+        print(
+            "Output path refers to the input FIT file; refusing to overwrite "
+            f"the source: {output_path}",
+            file=stderr,
+        )
+        return 2
+
     try:
         output_path.write_text(markdown, encoding="utf-8")
     except OSError as error:
@@ -268,6 +276,19 @@ def run(
     _write_markdown_to_stdout(markdown, stdout)
     _write_elevation_usage_summary(generator, stderr)
     return 0
+
+
+def _paths_refer_to_same_file(source: Path, output: Path) -> bool:
+    try:
+        if source.resolve() == output.resolve():
+            return True
+    except OSError:
+        pass
+
+    try:
+        return output.exists() and source.samefile(output)
+    except OSError:
+        return False
 
 
 def _fit_files_in_directory(input_directory: Path) -> list[Path]:

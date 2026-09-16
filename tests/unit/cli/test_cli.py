@@ -99,6 +99,93 @@ def test_run_writes_markdown_to_default_output_file(tmp_path: Path) -> None:
     assert expected_output.read_text(encoding="utf-8") == "# FIT Report\n"
 
 
+def test_run_rejects_output_that_is_the_input_file(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    source_bytes = b"FIT source bytes"
+    fit_file.write_bytes(source_bytes)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(fit_file), "--output", str(fit_file)],
+        report_generator=StubGenerator("# FIT Report\n"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 2
+    assert stdout.getvalue() == ""
+    assert "refers to the input FIT file" in stderr.getvalue()
+    assert fit_file.read_bytes() == source_bytes
+
+
+def test_run_rejects_relative_output_alias_of_input_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fit_file = tmp_path / "activity.fit"
+    source_bytes = b"FIT source bytes"
+    fit_file.write_bytes(source_bytes)
+    monkeypatch.chdir(tmp_path)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(fit_file.resolve()), "--output", "activity.fit"],
+        report_generator=StubGenerator("# FIT Report\n"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 2
+    assert stdout.getvalue() == ""
+    assert "refers to the input FIT file" in stderr.getvalue()
+    assert fit_file.read_bytes() == source_bytes
+
+
+def test_run_rejects_symlink_output_alias_of_input_file(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    output_link = tmp_path / "report.md"
+    source_bytes = b"FIT source bytes"
+    fit_file.write_bytes(source_bytes)
+    output_link.symlink_to(fit_file)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(fit_file), "--output", str(output_link)],
+        report_generator=StubGenerator("# FIT Report\n"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 2
+    assert stdout.getvalue() == ""
+    assert "refers to the input FIT file" in stderr.getvalue()
+    assert fit_file.read_bytes() == source_bytes
+
+
+def test_run_rejects_hard_link_output_alias_of_input_file(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    output_link = tmp_path / "report.md"
+    source_bytes = b"FIT source bytes"
+    fit_file.write_bytes(source_bytes)
+    output_link.hardlink_to(fit_file)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(fit_file), "--output", str(output_link)],
+        report_generator=StubGenerator("# FIT Report\n"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 2
+    assert stdout.getvalue() == ""
+    assert "refers to the input FIT file" in stderr.getvalue()
+    assert fit_file.read_bytes() == source_bytes
+
+
 def test_run_can_name_output_from_activity_start_time(tmp_path: Path) -> None:
     fit_file = tmp_path / "activity.fit"
     fit_file.write_bytes(b"FIT")

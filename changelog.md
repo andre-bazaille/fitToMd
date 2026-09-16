@@ -1,5 +1,7 @@
 ## 2026-09-16
 
+- Prevented report output paths from overwriting their source FIT file, including
+  relative or absolute path aliases, symbolic links, and hard links.
 - Added `--output-by-activity-time` to name generated Markdown files from the
   activity start time using the `YYYY-MM-DD HH:MM` format.
 - Added directory batch processing for direct-child FIT files, including
