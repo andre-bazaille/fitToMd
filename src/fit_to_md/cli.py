@@ -1,6 +1,7 @@
 import argparse
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TextIO
@@ -34,6 +35,13 @@ _TRUE_CONFIG_VALUES = frozenset(("1", "true", "yes", "on"))
 _FALSE_CONFIG_VALUES = frozenset(("0", "false", "no", "off"))
 
 
+@dataclass(frozen=True)
+class _PendingReport:
+    source: Path
+    output: Path
+    markdown: str
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
@@ -58,9 +66,13 @@ def _non_negative_float(value: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fit-to-md",
-        description="Convert a FIT activity file into a Markdown report.",
+        description="Convert a FIT activity file or directory into Markdown reports.",
     )
-    parser.add_argument("input", type=Path, help="Path to the FIT file to parse.")
+    parser.add_argument(
+        "input",
+        type=Path,
+        help="Path to a FIT file or a directory containing FIT files.",
+    )
     parser.add_argument(
         "--config",
         type=Path,
@@ -70,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-o",
         "--output",
         type=Path,
-        help="Optional path for the generated Markdown file; defaults to the input file with a .md suffix.",
+        help="Optional output path for a single FIT file; not allowed for directory inputs.",
     )
     parser.add_argument(
         "--output-by-activity-time",
@@ -184,9 +196,28 @@ def run(
     if not input_path.exists():
         print(f"Input file not found: {input_path}", file=stderr)
         return 2
-    if not input_path.is_file():
-        print(f"Input path is not a file: {input_path}", file=stderr)
+    if not input_path.is_file() and not input_path.is_dir():
+        print(f"Input path is not a file or directory: {input_path}", file=stderr)
         return 2
+
+    is_directory = input_path.is_dir()
+    if is_directory and args.output is not None:
+        print(
+            "The --output option cannot be used when input is a directory: "
+            f"{input_path}",
+            file=stderr,
+        )
+        return 2
+
+    fit_files: list[Path] = []
+    if is_directory:
+        try:
+            fit_files = _fit_files_in_directory(input_path)
+        except OSError as error:
+            print(f"Unable to read input directory: {input_path}: {error}", file=stderr)
+            return 1
+        if not fit_files:
+            return 0
 
     generator = report_generator or build_default_generator(
         dynamics_step_size=args.dynamics_step_size,
@@ -199,6 +230,15 @@ def run(
         opentopodata_base_url=args.opentopodata_base_url,
     )
     _configure_elevation_progress(generator, stderr)
+
+    if is_directory:
+        return _run_directory(
+            fit_files,
+            generator,
+            output_by_activity_time=args.output_by_activity_time,
+            stdout=stdout,
+            stderr=stderr,
+        )
 
     try:
         if args.output_by_activity_time and args.output is None:
@@ -225,11 +265,141 @@ def run(
         print(f"Unable to write Markdown report: {output_path}: {error}", file=stderr)
         return 1
 
-    stdout.write(markdown)
-    if not markdown.endswith("\n"):
-        stdout.write("\n")
+    _write_markdown_to_stdout(markdown, stdout)
     _write_elevation_usage_summary(generator, stderr)
     return 0
+
+
+def _fit_files_in_directory(input_directory: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in input_directory.iterdir()
+        if path.is_file() and path.suffix.casefold() == ".fit"
+    )
+
+
+def _run_directory(
+    fit_files: Sequence[Path],
+    generator: GenerateMarkdownReport,
+    *,
+    output_by_activity_time: bool,
+    stdout: TextIO,
+    stderr: TextIO,
+) -> int:
+    pending_reports: list[_PendingReport] = []
+    failed = False
+
+    for fit_file in fit_files:
+        if not output_by_activity_time:
+            output_path = fit_file.with_suffix(".md")
+            if output_path.is_file():
+                continue
+
+            try:
+                markdown = generator.execute(fit_file)
+            except (
+                fitdecode.FitError,
+                OSError,
+                NotImplementedError,
+                RuntimeError,
+            ) as error:
+                _write_directory_processing_error(fit_file, error, stderr)
+                failed = True
+                continue
+
+            pending_reports.append(
+                _PendingReport(
+                    source=fit_file,
+                    output=output_path,
+                    markdown=markdown,
+                )
+            )
+            continue
+
+        try:
+            report, markdown = generator.execute_with_report(fit_file)
+            output_path = _output_path_from_activity_time(
+                fit_file, report.summary.start_time
+            )
+        except (
+            fitdecode.FitError,
+            OSError,
+            NotImplementedError,
+            RuntimeError,
+        ) as error:
+            _write_directory_processing_error(fit_file, error, stderr)
+            failed = True
+            continue
+
+        if output_path.is_file():
+            continue
+        pending_reports.append(
+            _PendingReport(
+                source=fit_file,
+                output=output_path,
+                markdown=markdown,
+            )
+        )
+
+    output_groups: dict[Path, list[_PendingReport]] = {}
+    for pending_report in pending_reports:
+        output_groups.setdefault(pending_report.output, []).append(pending_report)
+
+    colliding_outputs = {
+        output_path
+        for output_path, reports in output_groups.items()
+        if len(reports) > 1
+    }
+    for output_path in sorted(colliding_outputs):
+        sources = ", ".join(str(report.source) for report in output_groups[output_path])
+        print(
+            f"Output path collision: {output_path} for inputs: {sources}",
+            file=stderr,
+        )
+        failed = True
+
+    for pending_report in pending_reports:
+        if pending_report.output in colliding_outputs:
+            continue
+        if pending_report.output.is_file():
+            continue
+
+        try:
+            pending_report.output.write_text(
+                pending_report.markdown,
+                encoding="utf-8",
+            )
+        except OSError as error:
+            print(
+                f"Unable to write Markdown report: {pending_report.output}: {error}",
+                file=stderr,
+            )
+            failed = True
+            continue
+
+        _write_markdown_to_stdout(pending_report.markdown, stdout)
+
+    _write_elevation_usage_summary(generator, stderr)
+    return 1 if failed else 0
+
+
+def _write_directory_processing_error(
+    fit_file: Path,
+    error: Exception,
+    stream: TextIO,
+) -> None:
+    if isinstance(error, fitdecode.FitError):
+        print(f"Invalid FIT file: {fit_file}: {error}", file=stream)
+    elif isinstance(error, OSError):
+        print(f"Unable to read input file: {fit_file}: {error}", file=stream)
+    else:
+        print(f"Unable to process input file: {fit_file}: {error}", file=stream)
+
+
+def _write_markdown_to_stdout(markdown: str, stream: TextIO) -> None:
+    stream.write(markdown)
+    if not markdown.endswith("\n"):
+        stream.write("\n")
 
 
 def _output_path_from_activity_time(

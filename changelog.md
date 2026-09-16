@@ -2,6 +2,9 @@
 
 - Added `--output-by-activity-time` to name generated Markdown files from the
   activity start time using the `YYYY-MM-DD HH:MM` format.
+- Added directory batch processing for direct-child FIT files, including
+  automatic output matching, existing-report skipping, and activity-time
+  naming support.
 
 ## 2026-09-02
 

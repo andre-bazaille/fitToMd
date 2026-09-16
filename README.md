@@ -72,6 +72,26 @@ option.
 `python -m fit_to_md` can be used instead of the `fit-to-md` command. Run
 `fit-to-md --help` for the complete CLI reference.
 
+Pass a directory to process its direct-child FIT files in filename order:
+
+```bash
+fit-to-md activities/
+```
+
+Each FIT file is written beside its source using the automatic `<fit-name>.md`
+name. Existing Markdown files are skipped, so the command can be rerun to
+process only new activities. Use `--output-by-activity-time` to match files by
+the `YYYY-MM-DD HH:MM.md` activity-time name instead:
+
+```bash
+fit-to-md activities/ --output-by-activity-time
+```
+
+Directory input does not support `--output`, and nested directories are not
+scanned. Newly generated reports are concatenated on standard output. A failed
+file does not stop the remaining files; the command returns exit code `1` after
+the batch completes.
+
 ## Example output
 
 ### FIT Report: 2020-01-01 Running
@@ -358,7 +378,7 @@ source filename.
 
 - `0`: report generated and written successfully
 - `1`: invalid FIT data, processing failure, read failure, or write failure
-- `2`: invalid CLI arguments or an input path that is missing or not a file
+- `2`: invalid CLI arguments or an input path that is missing or is neither a file nor a directory
 
 ## Architecture
 

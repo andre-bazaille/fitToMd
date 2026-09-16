@@ -30,6 +30,31 @@ class StubGeneratorWithReport(StubGenerator):
         return self.report, self.markdown
 
 
+class StubGeneratorBySource:
+    def __init__(self, markdown_by_source: dict[Path, str]) -> None:
+        self.markdown_by_source = markdown_by_source
+        self.calls: list[Path] = []
+
+    def execute(self, source: Path) -> str:
+        self.calls.append(source)
+        return self.markdown_by_source[source]
+
+
+class StubGeneratorWithReports:
+    def __init__(
+        self,
+        markdown_by_source: dict[Path, str],
+        reports_by_source: dict[Path, FitReport],
+    ) -> None:
+        self.markdown_by_source = markdown_by_source
+        self.reports_by_source = reports_by_source
+        self.calls: list[Path] = []
+
+    def execute_with_report(self, source: Path) -> tuple[FitReport, str]:
+        self.calls.append(source)
+        return self.reports_by_source[source], self.markdown_by_source[source]
+
+
 class StubElevationProvider:
     def __init__(self, summary: str) -> None:
         self._summary = summary
@@ -161,15 +186,274 @@ def test_run_returns_error_for_missing_input(tmp_path: Path) -> None:
     assert "Input file not found" in stderr.getvalue()
 
 
-def test_run_returns_error_when_input_is_not_a_file(tmp_path: Path) -> None:
+def test_run_treats_an_empty_directory_as_a_successful_no_op(tmp_path: Path) -> None:
     stdout = io.StringIO()
     stderr = io.StringIO()
 
     exit_code = run(argv=[str(tmp_path)], stdout=stdout, stderr=stderr)
 
-    assert exit_code == 2
+    assert exit_code == 0
     assert stdout.getvalue() == ""
-    assert "Input path is not a file" in stderr.getvalue()
+    assert stderr.getvalue() == ""
+
+
+def test_run_processes_sorted_direct_fit_children_and_skips_existing_reports(
+    tmp_path: Path,
+) -> None:
+    input_directory = tmp_path / "activities"
+    input_directory.mkdir()
+    first_fit = input_directory / "b.fit"
+    second_fit = input_directory / "a.FIT"
+    existing_fit = input_directory / "c.fit"
+    nested_directory = input_directory / "nested"
+    nested_directory.mkdir()
+    nested_fit = nested_directory / "nested.fit"
+    for fit_file in (first_fit, second_fit, existing_fit, nested_fit):
+        fit_file.write_bytes(b"FIT")
+    (input_directory / "notes.txt").write_text("not FIT", encoding="utf-8")
+    existing_report = existing_fit.with_suffix(".md")
+    existing_report.write_text("keep this report", encoding="utf-8")
+
+    generator = StubGeneratorBySource(
+        {
+            first_fit: "# B report",
+            second_fit: "# A report",
+        }
+    )
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(input_directory)],
+        report_generator=generator,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    assert generator.calls == [second_fit, first_fit]
+    assert second_fit.with_suffix(".md").read_text(encoding="utf-8") == "# A report"
+    assert first_fit.with_suffix(".md").read_text(encoding="utf-8") == "# B report"
+    assert existing_report.read_text(encoding="utf-8") == "keep this report"
+    assert not nested_fit.with_suffix(".md").exists()
+    assert stdout.getvalue() == "# A report\n# B report\n"
+    assert stderr.getvalue() == ""
+
+
+def test_run_rejects_manual_output_for_directory_input(tmp_path: Path) -> None:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    generator = StubGenerator("# report")
+
+    exit_code = run(
+        argv=[str(tmp_path), "--output", str(tmp_path / "reports.md")],
+        report_generator=generator,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 2
+    assert generator.calls == []
+    assert stdout.getvalue() == ""
+    assert "--output option cannot be used" in stderr.getvalue()
+
+
+def test_run_rejects_configured_manual_output_for_directory_input(
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / ".config"
+    config_file.write_text("output = reports.md\n", encoding="utf-8")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    generator = StubGenerator("# report")
+
+    exit_code = run(
+        argv=[str(tmp_path), "--config", str(config_file)],
+        report_generator=generator,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 2
+    assert generator.calls == []
+    assert stdout.getvalue() == ""
+    assert "--output option cannot be used" in stderr.getvalue()
+
+
+def test_run_uses_activity_time_names_and_skips_existing_reports(
+    tmp_path: Path,
+) -> None:
+    first_fit = tmp_path / "first.fit"
+    second_fit = tmp_path / "second.fit"
+    first_fit.write_bytes(b"FIT")
+    second_fit.write_bytes(b"FIT")
+    first_report_path = tmp_path / "2026-09-16 07:05.md"
+    first_report_path.write_text("keep this report", encoding="utf-8")
+    reports = {
+        first_fit: _report_with_start_time(datetime(2026, 9, 16, 7, 5)),
+        second_fit: _report_with_start_time(datetime(2026, 9, 16, 8, 10)),
+    }
+    generator = StubGeneratorWithReports(
+        {first_fit: "# old", second_fit: "# new"}, reports
+    )
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(tmp_path), "--output-by-activity-time"],
+        report_generator=generator,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    assert generator.calls == [first_fit, second_fit]
+    assert first_report_path.read_text(encoding="utf-8") == "keep this report"
+    assert (tmp_path / "2026-09-16 08:10.md").read_text(encoding="utf-8") == "# new"
+    assert stdout.getvalue() == "# new\n"
+    assert stderr.getvalue() == ""
+
+
+def test_run_continues_after_directory_processing_failure(tmp_path: Path) -> None:
+    input_directory = tmp_path / "activities"
+    input_directory.mkdir()
+    failing_fit = input_directory / "a.fit"
+    successful_fit = input_directory / "b.fit"
+    failing_fit.write_bytes(b"FIT")
+    successful_fit.write_bytes(b"FIT")
+
+    class PartiallyFailingGenerator(StubGenerator):
+        def execute(self, source: Path) -> str:
+            self.calls.append(source)
+            if source == failing_fit:
+                raise OSError("permission denied")
+            return self.markdown
+
+    generator = PartiallyFailingGenerator("# successful")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(input_directory)],
+        report_generator=generator,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert generator.calls == [failing_fit, successful_fit]
+    assert not failing_fit.with_suffix(".md").exists()
+    assert successful_fit.with_suffix(".md").read_text(encoding="utf-8") == (
+        "# successful"
+    )
+    assert stdout.getvalue() == "# successful\n"
+    assert f"Unable to read input file: {failing_fit}" in stderr.getvalue()
+
+
+def test_run_continues_after_directory_write_failure(tmp_path: Path) -> None:
+    input_directory = tmp_path / "activities"
+    input_directory.mkdir()
+    failing_fit = input_directory / "a.fit"
+    successful_fit = input_directory / "b.fit"
+    failing_fit.write_bytes(b"FIT")
+    successful_fit.write_bytes(b"FIT")
+    failing_fit.with_suffix(".md").mkdir()
+
+    generator = StubGenerator("# successful")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(input_directory)],
+        report_generator=generator,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert successful_fit.with_suffix(".md").read_text(encoding="utf-8") == (
+        "# successful"
+    )
+    assert stdout.getvalue() == "# successful\n"
+    assert "Unable to write Markdown report" in stderr.getvalue()
+
+
+def test_run_continues_after_missing_activity_time(tmp_path: Path) -> None:
+    input_directory = tmp_path / "activities"
+    input_directory.mkdir()
+    missing_time_fit = input_directory / "a.fit"
+    valid_fit = input_directory / "b.fit"
+    missing_time_fit.write_bytes(b"FIT")
+    valid_fit.write_bytes(b"FIT")
+    generator = StubGeneratorWithReports(
+        {missing_time_fit: "# missing", valid_fit: "# valid"},
+        {
+            missing_time_fit: _report_with_start_time(None),
+            valid_fit: _report_with_start_time(datetime(2026, 9, 16, 8, 10)),
+        },
+    )
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(input_directory), "--output-by-activity-time"],
+        report_generator=generator,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert not (input_directory / "2026-09-16 07:05.md").exists()
+    assert (input_directory / "2026-09-16 08:10.md").read_text(
+        encoding="utf-8"
+    ) == "# valid"
+    assert stdout.getvalue() == "# valid\n"
+    assert "Activity start time unavailable" in stderr.getvalue()
+
+
+def test_run_does_not_write_duplicate_activity_time_destinations(
+    tmp_path: Path,
+) -> None:
+    input_directory = tmp_path / "activities"
+    input_directory.mkdir()
+    first_fit = input_directory / "a.fit"
+    second_fit = input_directory / "b.fit"
+    unique_fit = input_directory / "c.fit"
+    for fit_file in (first_fit, second_fit, unique_fit):
+        fit_file.write_bytes(b"FIT")
+    duplicate_time = datetime(2026, 9, 16, 7, 5)
+    generator = StubGeneratorWithReports(
+        {
+            first_fit: "# first",
+            second_fit: "# second",
+            unique_fit: "# unique",
+        },
+        {
+            first_fit: _report_with_start_time(duplicate_time),
+            second_fit: _report_with_start_time(duplicate_time),
+            unique_fit: _report_with_start_time(datetime(2026, 9, 16, 8, 10)),
+        },
+    )
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(input_directory), "--output-by-activity-time"],
+        report_generator=generator,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert not (input_directory / "2026-09-16 07:05.md").exists()
+    assert (input_directory / "2026-09-16 08:10.md").read_text(
+        encoding="utf-8"
+    ) == "# unique"
+    assert stdout.getvalue() == "# unique\n"
+    error_output = stderr.getvalue()
+    assert "Output path collision" in error_output
+    assert str(first_fit) in error_output
+    assert str(second_fit) in error_output
 
 
 def test_run_returns_friendly_error_for_invalid_fit_file(tmp_path: Path) -> None:
