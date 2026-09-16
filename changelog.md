@@ -1,5 +1,7 @@
 ## 2026-09-16
 
+- Made optional Open-Meteo and OpenTopoData enrichment fail gracefully when a
+  service returns malformed JSON structures or non-finite numeric values.
 - Rejected NaN and infinite elevation settings at both CLI/config parsing and
   programmatic construction boundaries, preventing conversion-time numeric errors.
 - Preserved FIT-native session, record, and lap temperatures in automatic weather

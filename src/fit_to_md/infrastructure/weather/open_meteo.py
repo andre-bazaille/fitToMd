@@ -1,4 +1,5 @@
 import json
+import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -141,7 +142,10 @@ def _normalize_datetime(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def _parse_samples(payload: dict[str, Any]) -> list[_HourlyWeatherSample]:
+def _parse_samples(payload: Any) -> list[_HourlyWeatherSample]:
+    if not isinstance(payload, dict):
+        return []
+
     hourly = payload.get("hourly")
     if not isinstance(hourly, dict):
         return []
@@ -164,17 +168,30 @@ def _parse_samples(payload: dict[str, Any]) -> list[_HourlyWeatherSample]:
             timestamp = datetime.fromisoformat(raw_time).replace(tzinfo=UTC)
         except ValueError:
             continue
-        samples.append(
-            _HourlyWeatherSample(
-                timestamp=timestamp,
-                temperature_c=_to_float(temperatures[index]),
-                apparent_temperature_c=_to_float(apparent_temperatures[index]),
-                weather_code=_to_int(weather_codes[index]),
-                wind_speed_kmh=_to_float(wind_speeds[index]),
-                wind_direction_deg=_to_float(wind_directions[index]),
-            )
+        sample = _HourlyWeatherSample(
+            timestamp=timestamp,
+            temperature_c=_to_float(temperatures[index]),
+            apparent_temperature_c=_to_float(apparent_temperatures[index]),
+            weather_code=_to_int(weather_codes[index]),
+            wind_speed_kmh=_to_float(wind_speeds[index]),
+            wind_direction_deg=_to_float(wind_directions[index]),
         )
+        if _has_usable_weather(sample):
+            samples.append(sample)
     return samples
+
+
+def _has_usable_weather(sample: _HourlyWeatherSample) -> bool:
+    return any(
+        value is not None
+        for value in (
+            sample.temperature_c,
+            sample.apparent_temperature_c,
+            _weather_code_to_label(sample.weather_code),
+            sample.wind_speed_kmh,
+            sample.wind_direction_deg,
+        )
+    )
 
 
 def _as_list(value: Any, length: int) -> list[Any]:
@@ -206,8 +223,6 @@ def _average_wind_direction(values: Iterable[int | float | None]) -> float | Non
     collected = [float(value) for value in values if value is not None]
     if not collected:
         return None
-
-    import math
 
     sin_total = sum(math.sin(math.radians(value)) for value in collected)
     cos_total = sum(math.cos(math.radians(value)) for value in collected)
@@ -295,7 +310,11 @@ def _to_float(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        try:
+            converted = float(value)
+        except OverflowError:
+            return None
+        return converted if math.isfinite(converted) else None
     return None
 
 
@@ -304,6 +323,6 @@ def _to_int(value: Any) -> int | None:
         return None
     if isinstance(value, int):
         return value
-    if isinstance(value, float):
+    if isinstance(value, float) and math.isfinite(value):
         return round(value)
     return None

@@ -1,4 +1,5 @@
 import json
+import math
 from collections.abc import Callable, Sequence
 from time import monotonic, sleep
 from typing import Any
@@ -140,9 +141,10 @@ def _chunk_coordinates(
     ]
 
 
-def _parse_elevations(
-    payload: dict[str, Any], expected_count: int
-) -> list[float | None]:
+def _parse_elevations(payload: Any, expected_count: int) -> list[float | None]:
+    if not isinstance(payload, dict):
+        return [None] * expected_count
+
     if payload.get("status") != "OK":
         return [None] * expected_count
 
@@ -163,5 +165,9 @@ def _to_float(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        try:
+            converted = float(value)
+        except OverflowError:
+            return None
+        return converted if math.isfinite(converted) else None
     return None

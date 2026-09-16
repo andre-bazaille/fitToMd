@@ -11,7 +11,7 @@ from fit_to_md.infrastructure.elevation.open_topo_data import (
 
 
 class FakeResponse:
-    def __init__(self, payload: dict[str, object]) -> None:
+    def __init__(self, payload: object) -> None:
         self._buffer = io.StringIO(json.dumps(payload))
 
     def __enter__(self) -> io.StringIO:
@@ -20,6 +20,32 @@ class FakeResponse:
     def __exit__(self, exc_type, exc, tb) -> None:
         self._buffer.close()
         return None
+
+
+class RawResponse:
+    def __init__(self, body: str) -> None:
+        self._buffer = io.StringIO(body)
+
+    def __enter__(self) -> io.StringIO:
+        return self._buffer
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._buffer.close()
+        return None
+
+
+def _coordinates(count: int) -> tuple[ElevationCoordinate, ...]:
+    return tuple(
+        ElevationCoordinate(latitude_deg=45.0, longitude_deg=7.0 + index)
+        for index in range(count)
+    )
+
+
+def _lookup_elevations(payload: object, count: int = 1) -> tuple[float | None, ...]:
+    provider = OpenTopoDataElevationProvider(
+        urlopen_fn=lambda *args, **kwargs: FakeResponse(payload)
+    )
+    return provider.lookup(_coordinates(count))
 
 
 def test_open_topo_data_provider_posts_coordinates_and_parses_elevations() -> None:
@@ -75,6 +101,90 @@ def test_open_topo_data_provider_returns_none_for_failed_response() -> None:
     )
 
     assert elevations == (None,)
+
+
+@pytest.mark.parametrize("payload", ([], None, "unexpected", 42, True))
+def test_open_topo_data_provider_returns_none_for_non_object_payloads(
+    payload: object,
+) -> None:
+    assert _lookup_elevations(payload) == (None,)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {},
+        {"status": "OK"},
+        {"status": "OK", "results": {}},
+        {"status": "OK", "results": "unexpected"},
+    ),
+)
+def test_open_topo_data_provider_returns_none_for_malformed_nested_values(
+    payload: object,
+) -> None:
+    assert _lookup_elevations(payload) == (None,)
+
+
+def test_open_topo_data_provider_keeps_valid_values_from_partial_results() -> None:
+    elevations = _lookup_elevations(
+        {
+            "status": "OK",
+            "results": [
+                {"elevation": 123},
+                {"elevation": True},
+                {"elevation": "456"},
+                {"elevation": {}},
+                {"elevation": float("nan")},
+                {"elevation": float("inf")},
+                {"elevation": 10**400},
+                "unexpected",
+            ],
+        },
+        count=8,
+    )
+
+    assert elevations == (123.0, None, None, None, None, None, None, None)
+
+
+@pytest.mark.parametrize(
+    ("results", "expected"),
+    (
+        ([{"elevation": 12}], (12.0, None)),
+        ([{"elevation": 12}, {"elevation": 13}, {"elevation": 14}], (12.0, 13.0)),
+    ),
+)
+def test_open_topo_data_provider_preserves_expected_result_length(
+    results: list[object], expected: tuple[float | None, ...]
+) -> None:
+    assert _lookup_elevations({"status": "OK", "results": results}, count=2) == expected
+
+
+def test_open_topo_data_provider_returns_none_for_invalid_json() -> None:
+    provider = OpenTopoDataElevationProvider(
+        urlopen_fn=lambda *args, **kwargs: RawResponse("{")
+    )
+
+    assert provider.lookup(_coordinates(2)) == (None, None)
+
+
+def test_open_topo_data_provider_returns_none_for_transport_failure() -> None:
+    def failing_urlopen(*args, **kwargs):
+        raise OSError("network unavailable")
+
+    provider = OpenTopoDataElevationProvider(urlopen_fn=failing_urlopen)
+
+    assert provider.lookup(_coordinates(2)) == (None, None)
+
+
+def test_open_topo_data_provider_continues_after_malformed_batch() -> None:
+    responses = iter(([], {"status": "OK", "results": [{"elevation": 456}]}))
+    provider = OpenTopoDataElevationProvider(
+        base_url="https://elevation.internal",
+        max_batch_size=1,
+        urlopen_fn=lambda *args, **kwargs: FakeResponse(next(responses)),
+    )
+
+    assert provider.lookup(_coordinates(2)) == (None, 456.0)
 
 
 def test_open_topo_data_provider_uses_custom_dataset_and_base_url() -> None:
