@@ -233,7 +233,9 @@ Before lookup, `fitToMd` resamples the recorded itinerary by traveled distance.
 The first and last route points are included and intermediate coordinates are
 linearly interpolated every 25 m by default. OpenTopoData uses bilinear raster
 interpolation for those samples, and returned elevations are interpolated back
-onto the FIT records by distance.
+onto the FIT records by distance. Interpolation occurs only between adjacent
+successful DEM samples. If a sample or request batch has no elevation data, the
+original FIT altitude is retained throughout that uncovered interval.
 
 Change the spacing with `--dem-sample-distance`:
 

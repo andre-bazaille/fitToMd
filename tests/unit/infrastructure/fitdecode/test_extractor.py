@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Self
@@ -5,10 +6,14 @@ from typing import Self
 import fitdecode
 import pytest
 
+from fit_to_md.domain.activity.entities import ActivityRecord
 from fit_to_md.domain.reporting.entities import WeatherSummary
 from fit_to_md.domain.reporting.ports import ElevationCoordinate
 from fit_to_md.domain.reporting.services import SessionSummaryBuilder, TransitionBuilder
-from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
+from fit_to_md.infrastructure.fitdecode.extractor import (
+    FitdecodeActivityExtractor,
+    _replace_record_altitudes_from_dem,
+)
 
 
 class FakeField:
@@ -1061,6 +1066,273 @@ def test_extractor_hybrid_replaces_noisy_fit_altitude() -> None:
     assert report.summary.total_descent_m == pytest.approx(0.0, abs=0.5)
     assert report.transitions[0].samples[-1].grade_percent == pytest.approx(
         0.75, abs=0.1
+    )
+
+
+class StubElevationProvider:
+    def __init__(self, elevations: tuple[float | None, ...]) -> None:
+        self.elevations = elevations
+        self.calls: list[tuple[ElevationCoordinate, ...]] = []
+
+    def lookup(
+        self, coordinates: Sequence[ElevationCoordinate]
+    ) -> tuple[float | None, ...]:
+        self.calls.append(tuple(coordinates))
+        return self.elevations
+
+
+def test_dem_gap_preserves_fit_altitude_and_grade() -> None:
+    records = _elevation_records(
+        distances_m=(0.0, 1000.0, 2000.0),
+        altitudes_m=(10.0, 100.0, 30.0),
+    )
+
+    enriched = _replace_record_altitudes_from_dem(
+        records,
+        elevation_provider=StubElevationProvider((10.0, None, 30.0)),
+        elevation_mode="dem",
+        sample_distance_m=1000.0,
+    )
+
+    assert [record.altitude_m for record in enriched] == [10.0, 100.0, 30.0]
+    assert [record.grade_percent for record in enriched] == [None, 7.0, None]
+
+
+def test_dem_gap_does_not_interpolate_on_either_side_of_missing_sample() -> None:
+    records = _elevation_records(
+        distances_m=(0.0, 500.0, 1000.0, 1500.0, 2000.0),
+        altitudes_m=(10.0, 60.0, 100.0, 70.0, 30.0),
+    )
+
+    enriched = _replace_record_altitudes_from_dem(
+        records,
+        elevation_provider=StubElevationProvider((10.0, None, 30.0)),
+        elevation_mode="dem",
+        sample_distance_m=1000.0,
+    )
+
+    assert [record.altitude_m for record in enriched] == [
+        10.0,
+        60.0,
+        100.0,
+        70.0,
+        30.0,
+    ]
+    assert [record.grade_percent for record in enriched] == [
+        None,
+        7.0,
+        7.0,
+        7.0,
+        None,
+    ]
+
+
+def test_dem_failed_middle_batch_preserves_uncovered_fit_values() -> None:
+    records = _elevation_records(
+        distances_m=(0.0, 100.0, 200.0, 300.0, 400.0, 500.0),
+        altitudes_m=(10.0, 80.0, 90.0, 100.0, 70.0, 15.0),
+    )
+
+    enriched = _replace_record_altitudes_from_dem(
+        records,
+        elevation_provider=StubElevationProvider((10.0, 11.0, None, None, 14.0, 15.0)),
+        elevation_mode="dem",
+        sample_distance_m=100.0,
+    )
+
+    assert [record.altitude_m for record in enriched] == [
+        10.0,
+        11.0,
+        90.0,
+        100.0,
+        14.0,
+        15.0,
+    ]
+    assert [record.grade_percent for record in enriched] == [
+        None,
+        None,
+        7.0,
+        7.0,
+        None,
+        None,
+    ]
+
+
+def test_dem_missing_endpoints_preserve_fit_altitude() -> None:
+    records = _elevation_records(
+        distances_m=(0.0, 100.0, 200.0, 300.0),
+        altitudes_m=(50.0, 60.0, 70.0, 80.0),
+    )
+
+    enriched = _replace_record_altitudes_from_dem(
+        records,
+        elevation_provider=StubElevationProvider((None, 11.0, 12.0, None)),
+        elevation_mode="dem",
+        sample_distance_m=100.0,
+    )
+
+    assert [record.altitude_m for record in enriched] == [50.0, 11.0, 12.0, 80.0]
+
+
+def test_isolated_dem_sample_replaces_only_its_exact_record() -> None:
+    records = _elevation_records(
+        distances_m=(0.0, 50.0, 100.0, 150.0, 200.0),
+        altitudes_m=(50.0, 55.0, 60.0, 65.0, 70.0),
+    )
+
+    enriched = _replace_record_altitudes_from_dem(
+        records,
+        elevation_provider=StubElevationProvider((None, 12.0, None)),
+        elevation_mode="dem",
+        sample_distance_m=100.0,
+    )
+
+    assert [record.altitude_m for record in enriched] == [
+        50.0,
+        55.0,
+        12.0,
+        65.0,
+        70.0,
+    ]
+
+
+def test_dem_contiguous_coverage_interpolates_between_samples() -> None:
+    records = _elevation_records(
+        distances_m=(0.0, 50.0, 100.0),
+        altitudes_m=(50.0, 60.0, 70.0),
+    )
+
+    enriched = _replace_record_altitudes_from_dem(
+        records,
+        elevation_provider=StubElevationProvider((10.0, 20.0)),
+        elevation_mode="dem",
+        sample_distance_m=100.0,
+    )
+
+    assert [record.altitude_m for record in enriched] == [10.0, 15.0, 20.0]
+
+
+def test_short_dem_response_leaves_trailing_route_uncovered() -> None:
+    records = _elevation_records(
+        distances_m=(0.0, 100.0, 200.0),
+        altitudes_m=(50.0, 60.0, 70.0),
+    )
+
+    enriched = _replace_record_altitudes_from_dem(
+        records,
+        elevation_provider=StubElevationProvider((10.0, 20.0)),
+        elevation_mode="dem",
+        sample_distance_m=100.0,
+    )
+
+    assert [record.altitude_m for record in enriched] == [10.0, 20.0, 70.0]
+    assert enriched[-1].grade_percent == 7.0
+
+
+def test_dem_with_no_usable_coverage_returns_original_records() -> None:
+    records = _elevation_records(
+        distances_m=(0.0, 100.0, 200.0),
+        altitudes_m=(50.0, 60.0, 70.0),
+    )
+
+    enriched = _replace_record_altitudes_from_dem(
+        records,
+        elevation_provider=StubElevationProvider((None, None, None)),
+        elevation_mode="dem",
+        sample_distance_m=100.0,
+    )
+
+    assert enriched is records
+
+
+def test_hybrid_replacement_does_not_bridge_dem_gap() -> None:
+    records = _elevation_records(
+        distances_m=tuple(float(index * 100) for index in range(8)),
+        altitudes_m=(100.0, 140.0, 90.0, 150.0, 95.0, 155.0, 100.0, 160.0),
+    )
+
+    enriched = _replace_record_altitudes_from_dem(
+        records,
+        elevation_provider=StubElevationProvider(
+            (100.0, 101.0, 102.0, None, 104.0, 105.0, 106.0, 107.0)
+        ),
+        elevation_mode="hybrid",
+        sample_distance_m=100.0,
+    )
+
+    assert [record.altitude_m for record in enriched] == [
+        100.0,
+        101.0,
+        102.0,
+        150.0,
+        104.0,
+        105.0,
+        106.0,
+        107.0,
+    ]
+    assert enriched[3].grade_percent == 7.0
+
+
+def test_dem_gap_keeps_summary_and_split_elevation_consistent() -> None:
+    start = datetime(2026, 3, 29, 11, 0, 0)
+    frames = [
+        FakeFrame(
+            "session",
+            {
+                "start_time": start,
+                "timestamp": start + timedelta(seconds=200),
+                "total_timer_time": 200.0,
+                "total_distance": 2000.0,
+            },
+        )
+    ]
+    for index, altitude_m in enumerate((10.0, 100.0, 30.0)):
+        frames.append(
+            FakeFrame(
+                "record",
+                {
+                    "timestamp": start + timedelta(seconds=index * 100),
+                    "distance": float(index * 1000),
+                    "position_lat": _degrees_to_semicircles(45.0 + index * 0.001),
+                    "position_long": _degrees_to_semicircles(7.0 + index * 0.001),
+                    "enhanced_altitude": altitude_m,
+                },
+            )
+        )
+
+    report = FitdecodeActivityExtractor(
+        reader_factory=lambda _: FakeReader(frames),
+        elevation_provider=StubElevationProvider((10.0, None, 30.0)),
+        elevation_mode="dem",
+        elevation_sample_distance_m=1000.0,
+    ).extract(Path("activity.fit"))
+
+    assert report.summary.total_ascent_m == pytest.approx(18.33, abs=0.01)
+    assert report.summary.total_descent_m == pytest.approx(8.33, abs=0.01)
+    assert [split.elevation_delta_m for split in report.splits] == [90.0, -70.0]
+
+
+def _elevation_records(
+    distances_m: tuple[float, ...],
+    altitudes_m: tuple[float, ...],
+) -> tuple[ActivityRecord, ...]:
+    start = datetime(2026, 3, 29, 10, 0, 0)
+    return tuple(
+        ActivityRecord(
+            timestamp=start + timedelta(seconds=index * 10),
+            elapsed_time_s=float(index * 10),
+            distance_m=distance_m,
+            latitude_deg=45.0 + index * 0.001,
+            longitude_deg=7.0 + index * 0.001,
+            heart_rate_bpm=120,
+            cadence_spm=170,
+            fractional_cadence=0.0,
+            speed_mps=10.0,
+            altitude_m=altitudes_m[index],
+            grade_percent=7.0,
+            temperature_c=15.0,
+        )
+        for index, distance_m in enumerate(distances_m)
     )
 
 

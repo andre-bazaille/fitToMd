@@ -39,6 +39,12 @@ class _DistanceElevationPoint:
 
 
 @dataclass(frozen=True)
+class _DistanceElevationSample:
+    distance_m: float
+    altitude_m: float | None
+
+
+@dataclass(frozen=True)
 class _TimerEvent:
     timestamp: datetime
     event_type: str
@@ -532,49 +538,40 @@ def _replace_record_altitudes_from_dem(
             for point in sampled_points
         )
     )
-    elevation_profile = [
-        _DistanceElevationPoint(distance_m=point.distance_m, altitude_m=elevation_m)
-        for point, elevation_m in zip(sampled_points, sampled_elevations, strict=False)
-        if elevation_m is not None
+    elevation_samples = [
+        _DistanceElevationSample(
+            distance_m=point.distance_m,
+            altitude_m=(
+                sampled_elevations[index] if index < len(sampled_elevations) else None
+            ),
+        )
+        for index, point in enumerate(sampled_points)
     ]
-    if len(elevation_profile) < 2:
+    if not any(sample.altitude_m is not None for sample in elevation_samples):
         return records
     if elevation_mode == "hybrid" and not _should_replace_fit_altitude(
-        records, elevation_profile
+        records, elevation_samples
     ):
         return records
 
     enriched_records: list[ActivityRecord] = []
     changed = False
     for record in records:
-        altitude_m = record.altitude_m
+        enriched_record = record
         if record.distance_m is not None:
-            dem_altitude_m = _interpolate_altitude_at_distance(
-                elevation_profile, record.distance_m
+            dem_altitude_m = _interpolate_dem_altitude_at_distance(
+                elevation_samples, record.distance_m
             )
             if dem_altitude_m is not None:
-                altitude_m = dem_altitude_m
+                enriched_record = replace(
+                    record,
+                    altitude_m=dem_altitude_m,
+                    grade_percent=None,
+                )
 
-        grade_percent = None
-        if altitude_m != record.altitude_m or record.grade_percent is not None:
+        if enriched_record != record:
             changed = True
-
-        enriched_records.append(
-            ActivityRecord(
-                timestamp=record.timestamp,
-                elapsed_time_s=record.elapsed_time_s,
-                distance_m=record.distance_m,
-                latitude_deg=record.latitude_deg,
-                longitude_deg=record.longitude_deg,
-                heart_rate_bpm=record.heart_rate_bpm,
-                cadence_spm=record.cadence_spm,
-                fractional_cadence=record.fractional_cadence,
-                speed_mps=record.speed_mps,
-                altitude_m=altitude_m,
-                grade_percent=grade_percent,
-                temperature_c=record.temperature_c,
-            )
-        )
+        enriched_records.append(enriched_record)
 
     if not changed:
         return records
@@ -583,32 +580,56 @@ def _replace_record_altitudes_from_dem(
 
 def _should_replace_fit_altitude(
     records: tuple[ActivityRecord, ...],
-    dem_profile: list[_DistanceElevationPoint],
+    dem_samples: list[_DistanceElevationSample],
 ) -> bool:
     fit_profile = _build_distance_altitude_profile(records)
     if len(fit_profile) < 5:
         return False
 
-    fit_aligned_altitudes = [
-        _interpolate_altitude_at_distance(fit_profile, point.distance_m)
-        for point in dem_profile
-    ]
-    aligned_pairs = [
-        (fit_altitude_m, dem_point.altitude_m)
-        for fit_altitude_m, dem_point in zip(
-            fit_aligned_altitudes, dem_profile, strict=False
+    aligned_segments: list[list[tuple[float, float]]] = []
+    current_segment: list[tuple[float, float]] = []
+    for sample in dem_samples:
+        if sample.altitude_m is None:
+            if current_segment:
+                aligned_segments.append(current_segment)
+                current_segment = []
+            continue
+
+        fit_altitude_m = _interpolate_altitude_at_distance(
+            fit_profile, sample.distance_m
         )
-        if fit_altitude_m is not None
-    ]
+        if fit_altitude_m is None:
+            if current_segment:
+                aligned_segments.append(current_segment)
+                current_segment = []
+            continue
+        current_segment.append((fit_altitude_m, sample.altitude_m))
+
+    if current_segment:
+        aligned_segments.append(current_segment)
+
+    aligned_pairs = [pair for segment in aligned_segments for pair in segment]
     if len(aligned_pairs) < 5:
         return False
 
-    fit_total_variation_m = _total_variation(value for value, _ in aligned_pairs)
-    dem_total_variation_m = _total_variation(value for _, value in aligned_pairs)
+    fit_total_variation_m = sum(
+        _total_variation(value for value, _ in segment) for segment in aligned_segments
+    )
+    dem_total_variation_m = sum(
+        _total_variation(value for _, value in segment) for segment in aligned_segments
+    )
     mean_abs_difference_m = sum(abs(fit - dem) for fit, dem in aligned_pairs) / len(
         aligned_pairs
     )
-    fit_sign_flip_ratio = _segment_sign_flip_ratio(value for value, _ in aligned_pairs)
+    sign_flips = 0
+    direction_changes = 0
+    for segment in aligned_segments:
+        segment_flips, segment_changes = _segment_sign_flip_counts(
+            value for value, _ in segment
+        )
+        sign_flips += segment_flips
+        direction_changes += segment_changes
+    fit_sign_flip_ratio = sign_flips / direction_changes if direction_changes else 0.0
 
     return (
         fit_total_variation_m
@@ -647,10 +668,10 @@ def _total_variation(values: Any) -> float:
     return total
 
 
-def _segment_sign_flip_ratio(values: Any) -> float:
+def _segment_sign_flip_counts(values: Any) -> tuple[int, int]:
     collected = [float(value) for value in values]
     if len(collected) < 3:
-        return 0.0
+        return 0, 0
 
     directions: list[int] = []
     previous = collected[0]
@@ -662,7 +683,7 @@ def _segment_sign_flip_ratio(values: Any) -> float:
         directions.append(1 if delta > 0 else -1)
 
     if len(directions) < 2:
-        return 0.0
+        return 0, 0
 
     sign_flips = 0
     previous_direction = directions[0]
@@ -670,7 +691,7 @@ def _segment_sign_flip_ratio(values: Any) -> float:
         if direction != previous_direction:
             sign_flips += 1
         previous_direction = direction
-    return sign_flips / (len(directions) - 1)
+    return sign_flips, len(directions) - 1
 
 
 def _build_distance_coordinate_profile(
@@ -782,4 +803,38 @@ def _interpolate_altitude_at_distance(
                 (current_point.altitude_m - previous_point.altitude_m) * ratio
             )
         previous_point = current_point
+    return None
+
+
+def _interpolate_dem_altitude_at_distance(
+    samples: list[_DistanceElevationSample],
+    target_distance_m: float,
+) -> float | None:
+    if not samples:
+        return None
+    if (
+        target_distance_m < samples[0].distance_m
+        or target_distance_m > samples[-1].distance_m
+    ):
+        return None
+    if target_distance_m == samples[0].distance_m:
+        return samples[0].altitude_m
+
+    previous_sample = samples[0]
+    for current_sample in samples[1:]:
+        if target_distance_m == current_sample.distance_m:
+            return current_sample.altitude_m
+        if previous_sample.distance_m <= target_distance_m <= current_sample.distance_m:
+            if previous_sample.altitude_m is None or current_sample.altitude_m is None:
+                return None
+            interval_distance_m = current_sample.distance_m - previous_sample.distance_m
+            if interval_distance_m == 0:
+                return current_sample.altitude_m
+            ratio = (
+                target_distance_m - previous_sample.distance_m
+            ) / interval_distance_m
+            return previous_sample.altitude_m + (
+                (current_sample.altitude_m - previous_sample.altitude_m) * ratio
+            )
+        previous_sample = current_sample
     return None
