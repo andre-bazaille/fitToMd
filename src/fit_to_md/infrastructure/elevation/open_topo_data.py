@@ -8,12 +8,16 @@ from urllib.request import Request, urlopen
 from fit_to_md.domain.reporting.ports import (
     ElevationCoordinate,
     ElevationRunStatistics,
+    ProviderDiagnostic,
+    ProviderDiagnosticKind,
+    ProviderLookupResult,
 )
 
 _PUBLIC_API_BASE_URL = "https://api.opentopodata.org"
 _PUBLIC_API_MAX_BATCH_SIZE = 100
 _PUBLIC_API_MAX_CALLS_PER_RUN = 1000
 _PUBLIC_API_MIN_INTERVAL_S = 1.0
+_PROVIDER_NAME = "OpenTopoData"
 
 
 class OpenTopoDataElevationProvider:
@@ -49,21 +53,28 @@ class OpenTopoDataElevationProvider:
 
     def lookup(
         self, coordinates: Sequence[ElevationCoordinate]
-    ) -> tuple[float | None, ...]:
+    ) -> ProviderLookupResult[tuple[float | None, ...]]:
         if not coordinates:
-            return tuple()
+            return ProviderLookupResult(value=tuple())
 
         batches = _chunk_coordinates(coordinates, self._max_batch_size)
         if (
             self.is_public_api
             and (self._request_count + len(batches)) > _PUBLIC_API_MAX_CALLS_PER_RUN
         ):
-            raise RuntimeError(
-                "OpenTopoData public API limit exceeded for this run: more than 1000 requests would be required. "
-                "Reduce DEM sampling density or use a self-hosted instance."
+            return ProviderLookupResult(
+                value=(None,) * len(coordinates),
+                diagnostics=(
+                    ProviderDiagnostic(
+                        _PROVIDER_NAME,
+                        ProviderDiagnosticKind.QUOTA_EXCEEDED,
+                        "public API limit exceeded for this run; reduce DEM sampling density or use a self-hosted instance",
+                    ),
+                ),
             )
 
         elevations: list[float | None] = []
+        diagnostics: list[ProviderDiagnostic] = []
         total_batches = len(batches)
         for index, batch in enumerate(batches, start=1):
             self._throttle_if_needed()
@@ -74,12 +85,46 @@ class OpenTopoDataElevationProvider:
             try:
                 with self._urlopen_fn(request, timeout=self._timeout_s) as response:
                     payload = json.load(response)
-            except Exception:
+            except (OSError, TimeoutError) as error:
                 elevations.extend([None] * len(batch))
+                _append_diagnostic_once(
+                    diagnostics,
+                    ProviderDiagnosticKind.PROVIDER_UNAVAILABLE,
+                    f"elevation request failed: {error}",
+                )
+                continue
+            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                elevations.extend([None] * len(batch))
+                _append_diagnostic_once(
+                    diagnostics,
+                    ProviderDiagnosticKind.INVALID_RESPONSE,
+                    f"elevation response was not valid JSON: {error}",
+                )
                 continue
 
-            elevations.extend(_parse_elevations(payload, expected_count=len(batch)))
-        return tuple(elevations)
+            parsed, diagnostic = _parse_elevations(payload, expected_count=len(batch))
+            elevations.extend(parsed)
+            if diagnostic is not None:
+                _append_diagnostic_once(
+                    diagnostics, diagnostic.kind, diagnostic.message
+                )
+
+        covered_count = sum(elevation is not None for elevation in elevations)
+        if covered_count == 0 and not diagnostics:
+            _append_diagnostic_once(
+                diagnostics,
+                ProviderDiagnosticKind.NO_COVERAGE,
+                "elevation data is unavailable for this route",
+            )
+        elif 0 < covered_count < len(elevations):
+            _append_diagnostic_once(
+                diagnostics,
+                ProviderDiagnosticKind.PARTIAL_COVERAGE,
+                f"elevation data covered {covered_count}/{len(elevations)} sampled locations",
+            )
+        return ProviderLookupResult(
+            value=tuple(elevations), diagnostics=tuple(diagnostics)
+        )
 
     @property
     def is_public_api(self) -> bool:
@@ -145,16 +190,38 @@ def _chunk_coordinates(
     ]
 
 
-def _parse_elevations(payload: Any, expected_count: int) -> list[float | None]:
+def _parse_elevations(
+    payload: Any, expected_count: int
+) -> tuple[list[float | None], ProviderDiagnostic | None]:
     if not isinstance(payload, dict):
-        return [None] * expected_count
+        return [None] * expected_count, ProviderDiagnostic(
+            _PROVIDER_NAME,
+            ProviderDiagnosticKind.INVALID_RESPONSE,
+            "elevation response has an invalid structure",
+        )
 
     if payload.get("status") != "OK":
-        return [None] * expected_count
+        detail = payload.get("error")
+        message = "elevation provider returned an unsuccessful status"
+        if isinstance(detail, str) and detail:
+            message = f"{message}: {detail}"
+        kind = (
+            ProviderDiagnosticKind.QUOTA_EXCEEDED
+            if isinstance(detail, str)
+            and any(term in detail.casefold() for term in ("rate limit", "quota"))
+            else ProviderDiagnosticKind.PROVIDER_UNAVAILABLE
+        )
+        return [None] * expected_count, ProviderDiagnostic(
+            _PROVIDER_NAME, kind, message
+        )
 
     results = payload.get("results")
     if not isinstance(results, list):
-        return [None] * expected_count
+        return [None] * expected_count, ProviderDiagnostic(
+            _PROVIDER_NAME,
+            ProviderDiagnosticKind.INVALID_RESPONSE,
+            "elevation response has an invalid results structure",
+        )
 
     elevations = [
         _to_float(result.get("elevation")) if isinstance(result, dict) else None
@@ -162,7 +229,17 @@ def _parse_elevations(payload: Any, expected_count: int) -> list[float | None]:
     ]
     if len(elevations) < expected_count:
         elevations.extend([None] * (expected_count - len(elevations)))
-    return elevations[:expected_count]
+    return elevations[:expected_count], None
+
+
+def _append_diagnostic_once(
+    diagnostics: list[ProviderDiagnostic],
+    kind: ProviderDiagnosticKind,
+    message: str,
+) -> None:
+    if any(diagnostic.kind is kind for diagnostic in diagnostics):
+        return
+    diagnostics.append(ProviderDiagnostic(_PROVIDER_NAME, kind, message))
 
 
 def _to_float(value: Any) -> float | None:

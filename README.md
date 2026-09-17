@@ -255,11 +255,13 @@ fit-to-md activity.fit \
 - Dataset resolution is the practical accuracy limit; sampling much more densely
   than the DEM grid does not create more detailed source data.
 
-For the public API, the CLI batches at most 100 locations per request, starts at
-most one request per second, and refuses a conversion that would exceed 1,000
-requests in that run. OpenTopoData documents a separate 1,000-calls-per-day
-public-service limit. `fitToMd` reports progress and its per-run request count on
-standard error, but it does not track usage across separate CLI runs.
+For the public API, the CLI batches at most 100 locations per request and starts
+at most one request per second. If a conversion would exceed 1,000 requests in
+that run, terrain enrichment is skipped and a quota warning is written to
+standard error; the FIT-based report is still generated successfully.
+OpenTopoData documents a separate 1,000-calls-per-day public-service limit.
+`fitToMd` reports progress and its per-run request count on standard error, but
+it does not track usage across separate CLI runs.
 
 ### Elevation gain/loss smoothing
 
@@ -326,6 +328,10 @@ fit-to-md activity.fit --weather-mode auto
 When FIT weather is unavailable, this sends the activity start coordinates and
 time to Open-Meteo. If lookup fails or the FIT file has no start location/time,
 the report remains usable and states that weather is unavailable.
+
+Weather and terrain enrichment are best-effort. Service failures, malformed
+responses, quota exhaustion, and missing or partial coverage produce warnings on
+standard error without changing the Markdown or a successful exit code.
 
 ## Configuration file
 

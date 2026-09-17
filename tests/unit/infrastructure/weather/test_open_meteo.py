@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from fit_to_md.domain.reporting.ports import ProviderDiagnosticKind
 from fit_to_md.infrastructure.weather.open_meteo import (
     OpenMeteoHistoricalWeatherProvider,
 )
@@ -42,7 +43,7 @@ def _lookup_weather(payload: object):
         end_time=datetime(2026, 3, 24, 12, 21, tzinfo=UTC),
         latitude_deg=48.877191,
         longitude_deg=2.293044,
-    )
+    ).value
 
 
 def test_open_meteo_provider_parses_hourly_weather() -> None:
@@ -65,14 +66,16 @@ def test_open_meteo_provider_parses_hourly_weather() -> None:
 
     provider = OpenMeteoHistoricalWeatherProvider(urlopen_fn=fake_urlopen)
 
-    weather = provider.lookup(
+    result = provider.lookup(
         start_time=datetime(2026, 3, 24, 11, 20, tzinfo=UTC),
         end_time=datetime(2026, 3, 24, 12, 21, tzinfo=UTC),
         latitude_deg=48.877191,
         longitude_deg=2.293044,
     )
 
+    weather = result.value
     assert calls
+    assert result.diagnostics == ()
     assert weather is not None
     assert weather.source == "historical"
     assert weather.temperature_c == 15.2
@@ -143,14 +146,15 @@ def test_open_meteo_provider_returns_none_for_invalid_json() -> None:
         urlopen_fn=lambda *args, **kwargs: RawResponse("{")
     )
 
-    weather = provider.lookup(
+    result = provider.lookup(
         start_time=datetime(2026, 3, 24, 11, 20, tzinfo=UTC),
         end_time=None,
         latitude_deg=48.877191,
         longitude_deg=2.293044,
     )
 
-    assert weather is None
+    assert result.value is None
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.INVALID_RESPONSE
 
 
 def test_open_meteo_provider_returns_none_for_transport_failure() -> None:
@@ -159,11 +163,43 @@ def test_open_meteo_provider_returns_none_for_transport_failure() -> None:
 
     provider = OpenMeteoHistoricalWeatherProvider(urlopen_fn=failing_urlopen)
 
-    weather = provider.lookup(
+    result = provider.lookup(
         start_time=datetime(2026, 3, 24, 11, 20, tzinfo=UTC),
         end_time=None,
         latitude_deg=48.877191,
         longitude_deg=2.293044,
     )
 
-    assert weather is None
+    assert result.value is None
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.PROVIDER_UNAVAILABLE
+
+
+def test_open_meteo_provider_reports_valid_empty_data_as_no_coverage() -> None:
+    provider = OpenMeteoHistoricalWeatherProvider(
+        urlopen_fn=lambda *args, **kwargs: FakeResponse({"hourly": {"time": []}})
+    )
+
+    result = provider.lookup(
+        start_time=datetime(2026, 3, 24, 11, 20, tzinfo=UTC),
+        end_time=None,
+        latitude_deg=48.877191,
+        longitude_deg=2.293044,
+    )
+
+    assert result.value is None
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.NO_COVERAGE
+
+
+def test_open_meteo_provider_does_not_swallow_unexpected_errors() -> None:
+    def failing_urlopen(*args, **kwargs):
+        raise RuntimeError("programming error")
+
+    provider = OpenMeteoHistoricalWeatherProvider(urlopen_fn=failing_urlopen)
+
+    with pytest.raises(RuntimeError, match="programming error"):
+        provider.lookup(
+            start_time=datetime(2026, 3, 24, 11, 20, tzinfo=UTC),
+            end_time=None,
+            latitude_deg=48.877191,
+            longitude_deg=2.293044,
+        )

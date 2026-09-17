@@ -1,9 +1,31 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import Protocol
 
 from fit_to_md.domain.reporting.entities import FitReport, WeatherSummary
+
+
+class ProviderDiagnosticKind(Enum):
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+    INVALID_RESPONSE = "invalid_response"
+    QUOTA_EXCEEDED = "quota_exceeded"
+    PARTIAL_COVERAGE = "partial_coverage"
+    NO_COVERAGE = "no_coverage"
+
+
+@dataclass(frozen=True)
+class ProviderDiagnostic:
+    provider_name: str
+    kind: ProviderDiagnosticKind
+    message: str
+
+
+@dataclass(frozen=True)
+class ProviderLookupResult[T]:
+    value: T
+    diagnostics: tuple[ProviderDiagnostic, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -34,7 +56,7 @@ class ReportRenderer(Protocol):
 class ElevationProvider(Protocol):
     def lookup(
         self, coordinates: Sequence[ElevationCoordinate]
-    ) -> tuple[float | None, ...]: ...
+    ) -> ProviderLookupResult[tuple[float | None, ...]]: ...
 
 
 class HistoricalWeatherProvider(Protocol):
@@ -44,4 +66,4 @@ class HistoricalWeatherProvider(Protocol):
         end_time: datetime | None,
         latitude_deg: float,
         longitude_deg: float,
-    ) -> WeatherSummary | None: ...
+    ) -> ProviderLookupResult[WeatherSummary | None]: ...

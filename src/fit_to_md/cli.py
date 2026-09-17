@@ -7,12 +7,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
-import fitdecode
-
 from fit_to_md.application.use_cases.generate_markdown_report import (
     GenerateMarkdownReport,
 )
-from fit_to_md.domain.reporting.ports import ElevationDiagnostics
+from fit_to_md.domain.activity.ports import (
+    InvalidActivityError,
+    UnsupportedActivityError,
+)
+from fit_to_md.domain.reporting.ports import (
+    ElevationDiagnostics,
+    ProviderDiagnostic,
+)
 from fit_to_md.domain.reporting.services import SessionSummaryBuilder, TransitionBuilder
 from fit_to_md.infrastructure.config import ConfigFileError, load_option_file
 from fit_to_md.infrastructure.elevation import OpenTopoDataElevationProvider
@@ -49,6 +54,10 @@ class _PendingReport:
 class _DefaultRuntime:
     generator: GenerateMarkdownReport
     elevation_diagnostics: ElevationDiagnostics | None
+
+
+class ActivityTimeUnavailableError(Exception):
+    """An activity lacks the metadata required for time-based output naming."""
 
 
 def _positive_int(value: str) -> int:
@@ -286,23 +295,25 @@ def run(
         )
 
     try:
+        result = generator.execute_detailed(input_path)
+        markdown = result.markdown
         if args.output_by_activity_time and args.output is None:
-            report, markdown = generator.execute_with_report(input_path)
             output_path = _output_path_from_activity_time(
-                input_path, report.summary.start_time
+                input_path, result.report.summary.start_time
             )
         else:
-            markdown = generator.execute(input_path)
             output_path = args.output or input_path.with_suffix(".md")
-    except fitdecode.FitError as error:
+    except InvalidActivityError as error:
         print(f"Invalid FIT file: {input_path}: {error}", file=stderr)
         return 1
     except OSError as error:
         print(f"Unable to read input file: {input_path}: {error}", file=stderr)
         return 1
-    except (NotImplementedError, RuntimeError) as error:
+    except (UnsupportedActivityError, ActivityTimeUnavailableError) as error:
         print(str(error), file=stderr)
         return 1
+
+    _write_provider_diagnostics(result.diagnostics, stderr)
 
     if _paths_refer_to_same_file(input_path, output_path):
         print(
@@ -363,42 +374,46 @@ def _run_directory(
                 continue
 
             try:
-                markdown = generator.execute(fit_file)
+                result = generator.execute_detailed(fit_file)
             except (
-                fitdecode.FitError,
+                InvalidActivityError,
                 OSError,
-                NotImplementedError,
-                RuntimeError,
+                UnsupportedActivityError,
+                ActivityTimeUnavailableError,
             ) as error:
                 _write_directory_processing_error(fit_file, error, stderr)
                 failed = True
                 continue
 
+            _write_provider_diagnostics(result.diagnostics, stderr, source=fit_file)
+
             pending_reports.append(
                 _PendingReport(
                     source=fit_file,
                     output=output_path,
-                    markdown=markdown,
+                    markdown=result.markdown,
                     matching_outputs=(output_path,),
                 )
             )
             continue
 
         try:
-            report, markdown = generator.execute_with_report(fit_file)
+            result = generator.execute_detailed(fit_file)
             matching_outputs = _activity_time_output_candidates(
-                fit_file, report.summary.start_time
+                fit_file, result.report.summary.start_time
             )
             output_path = matching_outputs[0]
         except (
-            fitdecode.FitError,
+            InvalidActivityError,
             OSError,
-            NotImplementedError,
-            RuntimeError,
+            UnsupportedActivityError,
+            ActivityTimeUnavailableError,
         ) as error:
             _write_directory_processing_error(fit_file, error, stderr)
             failed = True
             continue
+
+        _write_provider_diagnostics(result.diagnostics, stderr, source=fit_file)
 
         if any(path.is_file() for path in matching_outputs):
             continue
@@ -406,7 +421,7 @@ def _run_directory(
             _PendingReport(
                 source=fit_file,
                 output=output_path,
-                markdown=markdown,
+                markdown=result.markdown,
                 matching_outputs=matching_outputs,
             )
         )
@@ -458,7 +473,7 @@ def _write_directory_processing_error(
     error: Exception,
     stream: TextIO,
 ) -> None:
-    if isinstance(error, fitdecode.FitError):
+    if isinstance(error, InvalidActivityError):
         print(f"Invalid FIT file: {fit_file}: {error}", file=stream)
     elif isinstance(error, OSError):
         print(f"Unable to read input file: {fit_file}: {error}", file=stream)
@@ -482,7 +497,7 @@ def _activity_time_output_candidates(
     input_path: Path, start_time: datetime | None
 ) -> tuple[Path, ...]:
     if start_time is None:
-        raise RuntimeError(
+        raise ActivityTimeUnavailableError(
             "Activity start time unavailable; cannot use activity time for output name."
         )
     portable_output = input_path.with_name(
@@ -561,3 +576,18 @@ def _configure_elevation_progress(
         )
 
     diagnostics.set_progress_callback(_write_progress)
+
+
+def _write_provider_diagnostics(
+    diagnostics: tuple[ProviderDiagnostic, ...],
+    stream: TextIO,
+    *,
+    source: Path | None = None,
+) -> None:
+    source_label = f" for {source}" if source is not None else ""
+    for diagnostic in diagnostics:
+        print(
+            f"Warning{source_label}: {diagnostic.provider_name}: "
+            f"{diagnostic.message} [{diagnostic.kind.value}]",
+            file=stream,
+        )

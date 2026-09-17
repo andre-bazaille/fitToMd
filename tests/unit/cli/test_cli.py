@@ -6,9 +6,17 @@ from pathlib import Path
 import pytest
 
 import fit_to_md.cli as cli
+from fit_to_md.application.use_cases.generate_markdown_report import (
+    GeneratedMarkdownReport,
+)
 from fit_to_md.cli import build_default_generator, build_parser, run
+from fit_to_md.domain.activity.ports import UnsupportedActivityError
 from fit_to_md.domain.reporting.entities import FitReport, SessionSummary
-from fit_to_md.domain.reporting.ports import ElevationRunStatistics
+from fit_to_md.domain.reporting.ports import (
+    ElevationRunStatistics,
+    ProviderDiagnostic,
+    ProviderDiagnosticKind,
+)
 from fit_to_md.infrastructure.weather import OpenMeteoHistoricalWeatherProvider
 
 
@@ -21,6 +29,12 @@ class StubGenerator:
         self.calls.append(source)
         return self.markdown
 
+    def execute_detailed(self, source: Path) -> GeneratedMarkdownReport:
+        return GeneratedMarkdownReport(
+            report=_report_with_start_time(None),
+            markdown=self.execute(source),
+        )
+
 
 class StubGeneratorWithReport(StubGenerator):
     def __init__(self, markdown: str, report: FitReport) -> None:
@@ -31,6 +45,10 @@ class StubGeneratorWithReport(StubGenerator):
         self.calls.append(source)
         return self.report, self.markdown
 
+    def execute_detailed(self, source: Path) -> GeneratedMarkdownReport:
+        self.calls.append(source)
+        return GeneratedMarkdownReport(self.report, self.markdown)
+
 
 class StubGeneratorBySource:
     def __init__(self, markdown_by_source: dict[Path, str]) -> None:
@@ -40,6 +58,11 @@ class StubGeneratorBySource:
     def execute(self, source: Path) -> str:
         self.calls.append(source)
         return self.markdown_by_source[source]
+
+    def execute_detailed(self, source: Path) -> GeneratedMarkdownReport:
+        return GeneratedMarkdownReport(
+            _report_with_start_time(None), self.execute(source)
+        )
 
 
 class StubGeneratorWithReports:
@@ -55,6 +78,10 @@ class StubGeneratorWithReports:
     def execute_with_report(self, source: Path) -> tuple[FitReport, str]:
         self.calls.append(source)
         return self.reports_by_source[source], self.markdown_by_source[source]
+
+    def execute_detailed(self, source: Path) -> GeneratedMarkdownReport:
+        report, markdown = self.execute_with_report(source)
+        return GeneratedMarkdownReport(report, markdown)
 
 
 class StubElevationDiagnostics:
@@ -101,6 +128,69 @@ def test_run_writes_markdown_to_default_output_file(tmp_path: Path) -> None:
     assert stderr.getvalue() == ""
     assert generator.calls == [fit_file]
     assert expected_output.read_text(encoding="utf-8") == "# FIT Report\n"
+
+
+def test_run_warns_and_succeeds_for_degraded_enrichment(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    diagnostic = ProviderDiagnostic(
+        "Weather Service",
+        ProviderDiagnosticKind.PROVIDER_UNAVAILABLE,
+        "request timed out",
+    )
+
+    class DegradedGenerator:
+        def execute_detailed(self, source: Path) -> GeneratedMarkdownReport:
+            return GeneratedMarkdownReport(
+                _report_with_start_time(None),
+                "# FIT Report\n",
+                (diagnostic,),
+            )
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    exit_code = run(
+        argv=[str(fit_file)],
+        report_generator=DegradedGenerator(),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    assert fit_file.with_suffix(".md").read_text(encoding="utf-8") == "# FIT Report\n"
+    assert stdout.getvalue() == "# FIT Report\n"
+    assert "Weather Service: request timed out [provider_unavailable]" in (
+        stderr.getvalue()
+    )
+
+
+def test_directory_diagnostic_identifies_source(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    diagnostic = ProviderDiagnostic(
+        "Terrain Service",
+        ProviderDiagnosticKind.NO_COVERAGE,
+        "route is outside coverage",
+    )
+
+    class DegradedGenerator:
+        def execute_detailed(self, source: Path) -> GeneratedMarkdownReport:
+            return GeneratedMarkdownReport(
+                _report_with_start_time(None),
+                "# FIT Report\n",
+                (diagnostic,),
+            )
+
+    stderr = io.StringIO()
+    exit_code = run(
+        argv=[str(tmp_path)],
+        report_generator=DegradedGenerator(),
+        stdout=io.StringIO(),
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    assert f"Warning for {fit_file}: Terrain Service" in stderr.getvalue()
 
 
 def test_run_rejects_output_that_is_the_input_file(tmp_path: Path) -> None:
@@ -652,8 +742,8 @@ def test_run_returns_friendly_error_for_multiple_sessions(tmp_path: Path) -> Non
     stderr = io.StringIO()
 
     class MultipleSessionGenerator:
-        def execute(self, source: Path) -> str:
-            raise NotImplementedError(
+        def execute_detailed(self, source: Path) -> GeneratedMarkdownReport:
+            raise UnsupportedActivityError(
                 "FIT files with multiple sessions are not supported."
             )
 
@@ -679,7 +769,7 @@ def test_run_returns_friendly_error_when_input_cannot_be_read(tmp_path: Path) ->
     stderr = io.StringIO()
 
     class UnreadableGenerator:
-        def execute(self, source: Path) -> str:
+        def execute_detailed(self, source: Path) -> GeneratedMarkdownReport:
             raise PermissionError("permission denied")
 
     exit_code = run(
@@ -1060,26 +1150,25 @@ def test_config_file_validates_finite_float_options(
     assert run(argv=arguments, report_generator=StubGenerator("# FIT Report\n")) == 0
 
 
-def test_run_returns_error_for_runtime_limit_failure(tmp_path: Path) -> None:
+def test_run_does_not_swallow_unexpected_runtime_error(tmp_path: Path) -> None:
     fit_file = tmp_path / "activity.fit"
     fit_file.write_bytes(b"FIT")
     stdout = io.StringIO()
     stderr = io.StringIO()
 
     class FailingGenerator:
-        def execute(self, source: Path) -> str:
-            raise RuntimeError("OpenTopoData public API limit exceeded")
+        def execute_detailed(self, source: Path) -> GeneratedMarkdownReport:
+            raise RuntimeError("unexpected programming error")
 
-    exit_code = run(
-        argv=[str(fit_file)],
-        report_generator=FailingGenerator(),
-        stdout=stdout,
-        stderr=stderr,
-    )
-
-    assert exit_code == 1
+    with pytest.raises(RuntimeError, match="unexpected programming error"):
+        run(
+            argv=[str(fit_file)],
+            report_generator=FailingGenerator(),
+            stdout=stdout,
+            stderr=stderr,
+        )
     assert stdout.getvalue() == ""
-    assert "OpenTopoData public API limit exceeded" in stderr.getvalue()
+    assert stderr.getvalue() == ""
 
 
 def _report_with_start_time(start_time: datetime | None) -> FitReport:

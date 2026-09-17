@@ -12,6 +12,10 @@ from fit_to_md.domain.activity.entities import (
     ActivityRecord,
     ActivitySession,
 )
+from fit_to_md.domain.activity.ports import (
+    InvalidActivityError,
+    UnsupportedActivityError,
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +42,12 @@ class FitdecodeActivityReader:
         self._reader_factory = reader_factory or fitdecode.FitReader
 
     def read(self, source: Path) -> Activity:
+        try:
+            return self._read(source)
+        except fitdecode.FitError as error:
+            raise InvalidActivityError(str(error)) from error
+
+    def _read(self, source: Path) -> Activity:
         session_values: dict[str, object] = {}
         session_count = 0
         laps: list[ActivityLap] = []
@@ -54,7 +64,7 @@ class FitdecodeActivityReader:
                 if frame.name == "session":
                     session_count += 1
                     if session_count > 1:
-                        raise NotImplementedError(
+                        raise UnsupportedActivityError(
                             "FIT files with multiple sessions are not supported."
                         )
                     session_values = _extract_message_values(frame)

@@ -21,6 +21,8 @@ These entities contain no fitdecode objects, raw FIT dictionaries, or FIT field 
 
 - immutable report entities (`FitReport`, `SessionSummary`, `Split`, and dynamics samples);
 - ports for rendering, elevation, and historical weather;
+- immutable provider lookup results that preserve usable enrichment values
+  alongside typed operational diagnostics;
 - a typed elevation diagnostics contract for progress callbacks and structured
   per-run request statistics;
 - domain services that compute summaries, kilometer splits, smoothed elevation, and dynamics from an `Activity`.
@@ -92,6 +94,14 @@ entities and does not depend on reporting services or external providers.
 provider calls, report calculation, assembly, and rendering. DEM route sampling,
 coverage handling, interpolation, and hybrid replacement rules remain pure
 Reporting domain behavior.
+
+`ActivityReader` implementations translate decoder-specific failures into typed
+invalid or unsupported activity errors. Weather and elevation providers return
+typed lookup results rather than using absence for every failure. The application
+collects provider diagnostics while retaining successful or partial values, and
+the CLI renders those diagnostics as warnings on stderr. Optional enrichment
+failures do not change a successfully generated report's exit status or Markdown
+content. Unexpected adapter exceptions are not converted into diagnostics.
 
 ### Fixture sanitization
 

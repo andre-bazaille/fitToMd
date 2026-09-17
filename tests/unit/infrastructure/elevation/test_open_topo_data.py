@@ -7,6 +7,7 @@ import pytest
 from fit_to_md.domain.reporting.ports import (
     ElevationCoordinate,
     ElevationRunStatistics,
+    ProviderDiagnosticKind,
 )
 from fit_to_md.infrastructure.elevation.open_topo_data import (
     OpenTopoDataElevationProvider,
@@ -48,7 +49,7 @@ def _lookup_elevations(payload: object, count: int = 1) -> tuple[float | None, .
     provider = OpenTopoDataElevationProvider(
         urlopen_fn=lambda *args, **kwargs: FakeResponse(payload)
     )
-    return provider.lookup(_coordinates(count))
+    return provider.lookup(_coordinates(count)).value
 
 
 def test_open_topo_data_provider_posts_coordinates_and_parses_elevations() -> None:
@@ -68,14 +69,15 @@ def test_open_topo_data_provider_posts_coordinates_and_parses_elevations() -> No
 
     provider = OpenTopoDataElevationProvider(urlopen_fn=fake_urlopen)
 
-    elevations = provider.lookup(
+    result = provider.lookup(
         (
             ElevationCoordinate(latitude_deg=45.1234567, longitude_deg=7.1234567),
             ElevationCoordinate(latitude_deg=45.2234567, longitude_deg=7.2234567),
         )
     )
 
-    assert elevations == (123.0, 456.5)
+    assert result.value == (123.0, 456.5)
+    assert result.diagnostics == ()
     assert calls
     request, timeout = calls[0]
     assert request.full_url == "https://api.opentopodata.org/v1/eudem25m"
@@ -99,11 +101,12 @@ def test_open_topo_data_provider_returns_none_for_failed_response() -> None:
 
     provider = OpenTopoDataElevationProvider(urlopen_fn=fake_urlopen)
 
-    elevations = provider.lookup(
+    result = provider.lookup(
         (ElevationCoordinate(latitude_deg=45.0, longitude_deg=7.0),)
     )
 
-    assert elevations == (None,)
+    assert result.value == (None,)
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.QUOTA_EXCEEDED
 
 
 @pytest.mark.parametrize("payload", ([], None, "unexpected", 42, True))
@@ -167,7 +170,9 @@ def test_open_topo_data_provider_returns_none_for_invalid_json() -> None:
         urlopen_fn=lambda *args, **kwargs: RawResponse("{")
     )
 
-    assert provider.lookup(_coordinates(2)) == (None, None)
+    result = provider.lookup(_coordinates(2))
+    assert result.value == (None, None)
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.INVALID_RESPONSE
 
 
 def test_open_topo_data_provider_returns_none_for_transport_failure() -> None:
@@ -176,7 +181,32 @@ def test_open_topo_data_provider_returns_none_for_transport_failure() -> None:
 
     provider = OpenTopoDataElevationProvider(urlopen_fn=failing_urlopen)
 
-    assert provider.lookup(_coordinates(2)) == (None, None)
+    result = provider.lookup(_coordinates(2))
+    assert result.value == (None, None)
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.PROVIDER_UNAVAILABLE
+
+
+def test_open_topo_data_provider_reports_valid_null_data_as_no_coverage() -> None:
+    provider = OpenTopoDataElevationProvider(
+        urlopen_fn=lambda *args, **kwargs: FakeResponse(
+            {"status": "OK", "results": [{"elevation": None}]}
+        )
+    )
+
+    result = provider.lookup(_coordinates(1))
+
+    assert result.value == (None,)
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.NO_COVERAGE
+
+
+def test_open_topo_data_provider_does_not_swallow_unexpected_errors() -> None:
+    def failing_urlopen(*args, **kwargs):
+        raise RuntimeError("programming error")
+
+    provider = OpenTopoDataElevationProvider(urlopen_fn=failing_urlopen)
+
+    with pytest.raises(RuntimeError, match="programming error"):
+        provider.lookup(_coordinates(1))
 
 
 def test_open_topo_data_provider_continues_after_malformed_batch() -> None:
@@ -187,7 +217,12 @@ def test_open_topo_data_provider_continues_after_malformed_batch() -> None:
         urlopen_fn=lambda *args, **kwargs: FakeResponse(next(responses)),
     )
 
-    assert provider.lookup(_coordinates(2)) == (None, 456.0)
+    result = provider.lookup(_coordinates(2))
+    assert result.value == (None, 456.0)
+    assert {diagnostic.kind for diagnostic in result.diagnostics} == {
+        ProviderDiagnosticKind.INVALID_RESPONSE,
+        ProviderDiagnosticKind.PARTIAL_COVERAGE,
+    }
 
 
 def test_open_topo_data_provider_uses_custom_dataset_and_base_url() -> None:
@@ -208,11 +243,11 @@ def test_open_topo_data_provider_uses_custom_dataset_and_base_url() -> None:
         urlopen_fn=fake_urlopen,
     )
 
-    elevations = provider.lookup(
+    result = provider.lookup(
         (ElevationCoordinate(latitude_deg=45.0, longitude_deg=7.0),)
     )
 
-    assert elevations == (123.0,)
+    assert result.value == (123.0,)
     request, _ = calls[0]
     assert request.full_url == "https://elevation.internal/api/v1/copernicus"
 
@@ -238,33 +273,31 @@ def test_open_topo_data_public_api_rate_limits_to_one_call_per_second() -> None:
         monotonic_fn=lambda: next(monotonic_values),
     )
 
-    elevations = provider.lookup(
+    result = provider.lookup(
         (
             ElevationCoordinate(latitude_deg=45.0, longitude_deg=7.0),
             ElevationCoordinate(latitude_deg=45.1, longitude_deg=7.1),
         )
     )
 
-    assert elevations == (123.0, 123.0)
+    assert result.value == (123.0, 123.0)
     assert len(calls) == 2
     assert sleeps == [0.8]
     assert provider.request_count == 2
 
 
-def test_open_topo_data_public_api_rejects_more_than_1000_calls_in_one_run() -> None:
+def test_open_topo_data_public_api_reports_more_than_1000_calls_in_one_run() -> None:
     provider = OpenTopoDataElevationProvider(max_batch_size=1)
 
-    with pytest.raises(RuntimeError) as error:
-        provider.lookup(
-            tuple(
-                ElevationCoordinate(
-                    latitude_deg=45.0, longitude_deg=7.0 + (index * 0.0001)
-                )
-                for index in range(1001)
-            )
+    result = provider.lookup(
+        tuple(
+            ElevationCoordinate(latitude_deg=45.0, longitude_deg=7.0 + (index * 0.0001))
+            for index in range(1001)
         )
+    )
 
-    assert "more than 1000 requests" in str(error.value)
+    assert result.value == (None,) * 1001
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.QUOTA_EXCEEDED
 
 
 def test_open_topo_data_provider_tracks_public_api_run_statistics() -> None:

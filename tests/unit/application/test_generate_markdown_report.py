@@ -8,8 +8,14 @@ from fit_to_md.application.use_cases.generate_markdown_report import (
     GenerateMarkdownReport,
 )
 from fit_to_md.domain.activity import Activity, ActivityRecord, ActivitySession
+from fit_to_md.domain.activity.ports import UnsupportedActivityError
 from fit_to_md.domain.reporting.entities import FitReport, WeatherSummary
-from fit_to_md.domain.reporting.ports import ElevationCoordinate
+from fit_to_md.domain.reporting.ports import (
+    ElevationCoordinate,
+    ProviderDiagnostic,
+    ProviderDiagnosticKind,
+    ProviderLookupResult,
+)
 
 
 class StubReader:
@@ -24,7 +30,7 @@ class StubReader:
 
 class FailingReader:
     def read(self, source: Path) -> Activity:
-        raise NotImplementedError("unsupported activity")
+        raise UnsupportedActivityError("unsupported activity")
 
 
 class StubRenderer:
@@ -37,8 +43,13 @@ class StubRenderer:
 
 
 class StubWeatherProvider:
-    def __init__(self, weather: WeatherSummary | None) -> None:
+    def __init__(
+        self,
+        weather: WeatherSummary | None,
+        diagnostics: tuple[ProviderDiagnostic, ...] = (),
+    ) -> None:
         self.weather = weather
+        self.diagnostics = diagnostics
         self.calls: list[tuple[datetime, datetime | None, float, float]] = []
 
     def lookup(
@@ -47,21 +58,26 @@ class StubWeatherProvider:
         end_time: datetime | None,
         latitude_deg: float,
         longitude_deg: float,
-    ) -> WeatherSummary | None:
+    ) -> ProviderLookupResult[WeatherSummary | None]:
         self.calls.append((start_time, end_time, latitude_deg, longitude_deg))
-        return self.weather
+        return ProviderLookupResult(self.weather, self.diagnostics)
 
 
 class StubElevationProvider:
-    def __init__(self, elevations: tuple[float | None, ...]) -> None:
+    def __init__(
+        self,
+        elevations: tuple[float | None, ...],
+        diagnostics: tuple[ProviderDiagnostic, ...] = (),
+    ) -> None:
         self.elevations = elevations
+        self.diagnostics = diagnostics
         self.calls: list[tuple[ElevationCoordinate, ...]] = []
 
     def lookup(
         self, coordinates: Sequence[ElevationCoordinate]
-    ) -> tuple[float | None, ...]:
+    ) -> ProviderLookupResult[tuple[float | None, ...]]:
         self.calls.append(tuple(coordinates))
-        return self.elevations
+        return ProviderLookupResult(self.elevations, self.diagnostics)
 
 
 def _activity(*, native_temperature: float | None = None) -> Activity:
@@ -240,10 +256,38 @@ def test_unsupported_input_stops_before_enrichment_and_rendering() -> None:
         elevation_mode="dem",
     )
 
-    with pytest.raises(NotImplementedError, match="unsupported activity"):
+    with pytest.raises(UnsupportedActivityError, match="unsupported activity"):
         use_case.execute(Path("activity.fit"))
     assert provider.calls == []
     assert renderer.calls == []
+
+
+def test_detailed_result_accumulates_provider_diagnostics() -> None:
+    elevation_diagnostic = ProviderDiagnostic(
+        "Terrain",
+        ProviderDiagnosticKind.PARTIAL_COVERAGE,
+        "partial terrain coverage",
+    )
+    weather_diagnostic = ProviderDiagnostic(
+        "Weather",
+        ProviderDiagnosticKind.PROVIDER_UNAVAILABLE,
+        "weather service unavailable",
+    )
+    use_case = GenerateMarkdownReport(
+        reader=StubReader(_activity()),
+        renderer=StubRenderer(),
+        elevation_provider=StubElevationProvider(
+            (200.0, None), (elevation_diagnostic,)
+        ),
+        elevation_mode="dem",
+        elevation_sample_distance_m=1000.0,
+        weather_provider=StubWeatherProvider(None, (weather_diagnostic,)),
+    )
+
+    result = use_case.execute_detailed(Path("activity.fit"))
+
+    assert result.markdown == "rendered markdown"
+    assert result.diagnostics == (elevation_diagnostic, weather_diagnostic)
 
 
 @pytest.mark.parametrize("invalid_value", (float("nan"), float("inf"), 0.0))

@@ -9,6 +9,13 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 
 from fit_to_md.domain.reporting.entities import WeatherSummary
+from fit_to_md.domain.reporting.ports import (
+    ProviderDiagnostic,
+    ProviderDiagnosticKind,
+    ProviderLookupResult,
+)
+
+_PROVIDER_NAME = "Open-Meteo"
 
 
 @dataclass(frozen=True)
@@ -38,7 +45,7 @@ class OpenMeteoHistoricalWeatherProvider:
         end_time: datetime | None,
         latitude_deg: float,
         longitude_deg: float,
-    ) -> WeatherSummary | None:
+    ) -> ProviderLookupResult[WeatherSummary | None]:
         normalized_start = _normalize_datetime(start_time)
         normalized_end = _normalize_datetime(end_time or start_time)
         if normalized_end < normalized_start:
@@ -54,12 +61,29 @@ class OpenMeteoHistoricalWeatherProvider:
         try:
             with self._urlopen_fn(url, timeout=self._timeout_s) as response:
                 payload = json.load(response)
-        except Exception:
-            return None
+        except (OSError, TimeoutError) as error:
+            return _failure_result(
+                ProviderDiagnosticKind.PROVIDER_UNAVAILABLE,
+                f"historical weather request failed: {error}",
+            )
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            return _failure_result(
+                ProviderDiagnosticKind.INVALID_RESPONSE,
+                f"historical weather response was not valid JSON: {error}",
+            )
+
+        if not _has_valid_payload_shape(payload):
+            return _failure_result(
+                ProviderDiagnosticKind.INVALID_RESPONSE,
+                "historical weather response has an invalid structure",
+            )
 
         samples = _parse_samples(payload)
         if not samples:
-            return None
+            return _failure_result(
+                ProviderDiagnosticKind.NO_COVERAGE,
+                "historical weather data is unavailable for this activity",
+            )
 
         window_start = normalized_start.replace(minute=0, second=0, microsecond=0)
         window_end = normalized_end.replace(minute=0, second=0, microsecond=0)
@@ -74,11 +98,17 @@ class OpenMeteoHistoricalWeatherProvider:
                 [representative_sample] if representative_sample is not None else []
             )
         if not window_samples:
-            return None
+            return _failure_result(
+                ProviderDiagnosticKind.NO_COVERAGE,
+                "historical weather data is unavailable for this activity",
+            )
 
         representative_sample = _nearest_sample(window_samples, normalized_start)
         if representative_sample is None:
-            return None
+            return _failure_result(
+                ProviderDiagnosticKind.NO_COVERAGE,
+                "historical weather data is unavailable for this activity",
+            )
 
         wind_speed_kmh = _average_optional(
             sample.wind_speed_kmh for sample in window_samples
@@ -89,20 +119,22 @@ class OpenMeteoHistoricalWeatherProvider:
             )
         )
 
-        return WeatherSummary(
-            source="historical",
-            temperature_c=representative_sample.temperature_c,
-            apparent_temperature_c=representative_sample.apparent_temperature_c,
-            condition_summary=_weather_code_to_label(
-                representative_sample.weather_code
-            ),
-            wind_speed_kmh=wind_speed_kmh,
-            wind_direction_label=wind_direction_label,
-            temperature_min_c=_min_optional(
-                sample.temperature_c for sample in window_samples
-            ),
-            temperature_max_c=_max_optional(
-                sample.temperature_c for sample in window_samples
+        return ProviderLookupResult(
+            value=WeatherSummary(
+                source="historical",
+                temperature_c=representative_sample.temperature_c,
+                apparent_temperature_c=representative_sample.apparent_temperature_c,
+                condition_summary=_weather_code_to_label(
+                    representative_sample.weather_code
+                ),
+                wind_speed_kmh=wind_speed_kmh,
+                wind_direction_label=wind_direction_label,
+                temperature_min_c=_min_optional(
+                    sample.temperature_c for sample in window_samples
+                ),
+                temperature_max_c=_max_optional(
+                    sample.temperature_c for sample in window_samples
+                ),
             ),
         )
 
@@ -140,6 +172,24 @@ def _normalize_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _failure_result(
+    kind: ProviderDiagnosticKind, message: str
+) -> ProviderLookupResult[WeatherSummary | None]:
+    return ProviderLookupResult(
+        value=None,
+        diagnostics=(ProviderDiagnostic(_PROVIDER_NAME, kind, message),),
+    )
+
+
+def _has_valid_payload_shape(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    hourly = payload.get("hourly")
+    if not isinstance(hourly, dict):
+        return False
+    return isinstance(hourly.get("time"), list)
 
 
 def _parse_samples(payload: Any) -> list[_HourlyWeatherSample]:

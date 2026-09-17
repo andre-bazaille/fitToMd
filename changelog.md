@@ -1,5 +1,9 @@
 ## 2026-09-17
 
+- Added typed activity-read failures and provider lookup results, preserving
+  partial enrichment values with diagnostics for unavailable services, invalid
+  responses, quota exhaustion, and missing coverage; degraded reports now warn
+  on stderr while completing successfully.
 - Replaced the report-producing FIT extractor with an `ActivityReader` boundary;
   the application now owns optional enrichment, report assembly, and rendering,
   while decoder-independent DEM profile rules live in the Reporting domain.

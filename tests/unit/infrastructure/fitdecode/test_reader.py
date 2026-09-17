@@ -10,9 +10,16 @@ from fit_to_md.application.use_cases.generate_markdown_report import (
     GenerateMarkdownReport,
 )
 from fit_to_md.domain.activity.entities import ActivityRecord
+from fit_to_md.domain.activity.ports import (
+    InvalidActivityError,
+    UnsupportedActivityError,
+)
 from fit_to_md.domain.reporting.elevation import ElevationEnricher
 from fit_to_md.domain.reporting.entities import WeatherSummary
-from fit_to_md.domain.reporting.ports import ElevationCoordinate
+from fit_to_md.domain.reporting.ports import (
+    ElevationCoordinate,
+    ProviderLookupResult,
+)
 from fit_to_md.domain.reporting.services import SessionSummaryBuilder, TransitionBuilder
 from fit_to_md.infrastructure.fitdecode.reader import FitdecodeActivityReader
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
@@ -42,7 +49,7 @@ def _replace_record_altitudes_from_dem(
 ):
     enricher = ElevationEnricher(sample_distance_m)
     coordinates = enricher.sample_coordinates(records)
-    elevations = elevation_provider.lookup(coordinates)
+    elevations = elevation_provider.lookup(coordinates).value
     return enricher.enrich_records(records, elevations, elevation_mode)
 
 
@@ -75,6 +82,22 @@ class FakeReader:
 
     def __iter__(self):
         return iter(self._frames)
+
+
+def test_reader_translates_fitdecode_errors_to_invalid_activity() -> None:
+    class InvalidReader:
+        def __enter__(self):
+            raise fitdecode.FitError("invalid FIT data")
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    reader = FitdecodeActivityReader(reader_factory=lambda _: InvalidReader())
+
+    with pytest.raises(InvalidActivityError, match="invalid FIT data") as error:
+        reader.read(Path("invalid.fit"))
+
+    assert isinstance(error.value.__cause__, fitdecode.FitError)
 
 
 @pytest.mark.parametrize("invalid_value", (float("nan"), float("inf"), float("-inf")))
@@ -275,7 +298,7 @@ def test_generator_rejects_multiple_sessions_instead_of_combining_them() -> None
     generator = _generator(reader_factory=lambda _: FakeReader(frames))
 
     with pytest.raises(
-        NotImplementedError,
+        UnsupportedActivityError,
         match="FIT files with multiple sessions are not supported",
     ):
         generator.build_report(Path("multisport.fit"))
@@ -615,9 +638,9 @@ def test_generator_uses_record_start_for_summary_and_weather_lookup() -> None:
             end_time: datetime | None,
             latitude_deg: float,
             longitude_deg: float,
-        ) -> WeatherSummary | None:
+        ) -> ProviderLookupResult[WeatherSummary | None]:
             self.calls.append((start_time, end_time, latitude_deg, longitude_deg))
-            return None
+            return ProviderLookupResult(None)
 
     weather_provider = RecordingWeatherProvider()
     report = _generator(
@@ -674,15 +697,17 @@ def test_generator_enriches_missing_weather_from_provider() -> None:
             end_time: datetime | None,
             latitude_deg: float,
             longitude_deg: float,
-        ) -> WeatherSummary | None:
+        ) -> ProviderLookupResult[WeatherSummary | None]:
             self.calls.append((start_time, end_time, latitude_deg, longitude_deg))
-            return WeatherSummary(
-                source="historical",
-                temperature_c=15.0,
-                apparent_temperature_c=14.0,
-                condition_summary="Sunny",
-                wind_speed_kmh=19.0,
-                wind_direction_label="SW",
+            return ProviderLookupResult(
+                WeatherSummary(
+                    source="historical",
+                    temperature_c=15.0,
+                    apparent_temperature_c=14.0,
+                    condition_summary="Sunny",
+                    wind_speed_kmh=19.0,
+                    wind_direction_label="SW",
+                )
             )
 
     weather_provider = StubWeatherProvider()
@@ -747,15 +772,17 @@ def test_generator_does_not_replace_fit_temperature_with_historical_weather(
             end_time: datetime | None,
             latitude_deg: float,
             longitude_deg: float,
-        ) -> WeatherSummary | None:
+        ) -> ProviderLookupResult[WeatherSummary | None]:
             self.calls += 1
-            return WeatherSummary(
-                source="historical",
-                temperature_c=5.0,
-                apparent_temperature_c=None,
-                condition_summary=None,
-                wind_speed_kmh=None,
-                wind_direction_label=None,
+            return ProviderLookupResult(
+                WeatherSummary(
+                    source="historical",
+                    temperature_c=5.0,
+                    apparent_temperature_c=None,
+                    condition_summary=None,
+                    wind_speed_kmh=None,
+                    wind_direction_label=None,
+                )
             )
 
     weather_provider = UnexpectedWeatherProvider()
@@ -1083,9 +1110,9 @@ def test_generator_replaces_fit_altitude_with_dem_samples() -> None:
 
         def lookup(
             self, coordinates: tuple[ElevationCoordinate, ...]
-        ) -> tuple[float | None, ...]:
+        ) -> ProviderLookupResult[tuple[float | None, ...]]:
             self.calls.append(coordinates)
-            return (100.0, 102.5, 105.0, 107.5, 110.0)
+            return ProviderLookupResult((100.0, 102.5, 105.0, 107.5, 110.0))
 
     elevation_provider = StubElevationProvider()
     generator = _generator(
@@ -1144,8 +1171,8 @@ def test_generator_hybrid_keeps_stable_fit_altitude() -> None:
     class StubElevationProvider:
         def lookup(
             self, coordinates: tuple[ElevationCoordinate, ...]
-        ) -> tuple[float | None, ...]:
-            return (200.0, 205.0, 210.0, 215.0, 220.0)
+        ) -> ProviderLookupResult[tuple[float | None, ...]]:
+            return ProviderLookupResult((200.0, 205.0, 210.0, 215.0, 220.0))
 
     report = _generator(
         reader_factory=lambda _: FakeReader(frames),
@@ -1209,8 +1236,8 @@ def test_generator_hybrid_replaces_noisy_fit_altitude() -> None:
     class StubElevationProvider:
         def lookup(
             self, coordinates: tuple[ElevationCoordinate, ...]
-        ) -> tuple[float | None, ...]:
-            return (100.0, 102.5, 105.0, 107.5, 110.0)
+        ) -> ProviderLookupResult[tuple[float | None, ...]]:
+            return ProviderLookupResult((100.0, 102.5, 105.0, 107.5, 110.0))
 
     report = _generator(
         reader_factory=lambda _: FakeReader(frames),
@@ -1234,9 +1261,9 @@ class StubElevationProvider:
 
     def lookup(
         self, coordinates: Sequence[ElevationCoordinate]
-    ) -> tuple[float | None, ...]:
+    ) -> ProviderLookupResult[tuple[float | None, ...]]:
         self.calls.append(tuple(coordinates))
-        return self.elevations
+        return ProviderLookupResult(self.elevations)
 
 
 def test_dem_gap_preserves_fit_altitude_and_grade() -> None:
