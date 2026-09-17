@@ -8,6 +8,7 @@ import pytest
 import fit_to_md.cli as cli
 from fit_to_md.application.use_cases.generate_markdown_report import (
     GeneratedMarkdownReport,
+    ReportGenerationMetadata,
 )
 from fit_to_md.cli import build_default_generator, build_parser, run
 from fit_to_md.domain.activity.ports import UnsupportedActivityError
@@ -74,6 +75,13 @@ class StubGeneratorWithReports:
         self.markdown_by_source = markdown_by_source
         self.reports_by_source = reports_by_source
         self.calls: list[Path] = []
+        self.inspection_calls: list[Path] = []
+
+    def inspect(self, source: Path) -> ReportGenerationMetadata:
+        self.inspection_calls.append(source)
+        return ReportGenerationMetadata(
+            self.reports_by_source[source].summary.start_time
+        )
 
     def execute_with_report(self, source: Path) -> tuple[FitReport, str]:
         self.calls.append(source)
@@ -542,7 +550,8 @@ def test_run_uses_activity_time_names_and_skips_existing_reports(
     )
 
     assert exit_code == 0
-    assert generator.calls == [first_fit, second_fit]
+    assert generator.inspection_calls == [first_fit, second_fit]
+    assert generator.calls == [second_fit]
     assert first_report_path.read_text(encoding="utf-8") == "keep this report"
     assert (tmp_path / "2026-09-16 08-10.md").read_text(encoding="utf-8") == "# new"
     assert stdout.getvalue() == "# new\n"
@@ -577,6 +586,8 @@ def test_run_skips_legacy_activity_time_report(tmp_path: Path) -> None:
     assert not (tmp_path / "2026-09-16 07-05.md").exists()
     assert stdout.getvalue() == ""
     assert stderr.getvalue() == ""
+    assert generator.inspection_calls == [fit_file]
+    assert generator.calls == []
 
 
 def test_run_continues_after_directory_processing_failure(tmp_path: Path) -> None:
@@ -719,6 +730,8 @@ def test_run_does_not_write_duplicate_activity_time_destinations(
     assert "Output path collision" in error_output
     assert str(first_fit) in error_output
     assert str(second_fit) in error_output
+    assert generator.inspection_calls == [first_fit, second_fit, unique_fit]
+    assert generator.calls == [unique_fit]
 
 
 def test_run_returns_friendly_error_for_invalid_fit_file(tmp_path: Path) -> None:

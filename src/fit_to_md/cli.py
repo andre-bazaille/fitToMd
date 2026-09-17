@@ -10,6 +10,13 @@ from typing import TextIO
 from fit_to_md.application.use_cases.generate_markdown_report import (
     GenerateMarkdownReport,
 )
+from fit_to_md.application.use_cases.generate_markdown_report_batch import (
+    ActivityTimeUnavailableError,
+    BatchOutputNaming,
+    BatchReportStatus,
+    GenerateMarkdownReportBatch,
+    activity_time_output_candidates,
+)
 from fit_to_md.domain.activity.ports import (
     InvalidActivityError,
     UnsupportedActivityError,
@@ -23,6 +30,7 @@ from fit_to_md.infrastructure.config import ConfigFileError, load_option_file
 from fit_to_md.infrastructure.elevation import OpenTopoDataElevationProvider
 from fit_to_md.infrastructure.fitdecode.reader import FitdecodeActivityReader
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
+from fit_to_md.infrastructure.markdown.writer import LocalMarkdownReportWriter
 from fit_to_md.infrastructure.weather import OpenMeteoHistoricalWeatherProvider
 
 CONFIGURABLE_OPTIONS = (
@@ -43,21 +51,9 @@ _FALSE_CONFIG_VALUES = frozenset(("0", "false", "no", "off"))
 
 
 @dataclass(frozen=True)
-class _PendingReport:
-    source: Path
-    output: Path
-    markdown: str
-    matching_outputs: tuple[Path, ...]
-
-
-@dataclass(frozen=True)
 class _DefaultRuntime:
     generator: GenerateMarkdownReport
     elevation_diagnostics: ElevationDiagnostics | None
-
-
-class ActivityTimeUnavailableError(Exception):
-    """An activity lacks the metadata required for time-based output naming."""
 
 
 def _positive_int(value: str) -> int:
@@ -364,105 +360,57 @@ def _run_directory(
     stdout: TextIO,
     stderr: TextIO,
 ) -> int:
-    pending_reports: list[_PendingReport] = []
+    batch = GenerateMarkdownReportBatch(generator, LocalMarkdownReportWriter())
+    naming = (
+        BatchOutputNaming.ACTIVITY_TIME
+        if output_by_activity_time
+        else BatchOutputNaming.SOURCE_NAME
+    )
     failed = False
+    reported_collisions: set[Path] = set()
 
-    for fit_file in fit_files:
-        if not output_by_activity_time:
-            output_path = fit_file.with_suffix(".md")
-            if output_path.is_file():
-                continue
-
-            try:
-                result = generator.execute_detailed(fit_file)
-            except (
-                InvalidActivityError,
-                OSError,
-                UnsupportedActivityError,
-                ActivityTimeUnavailableError,
-            ) as error:
-                _write_directory_processing_error(fit_file, error, stderr)
-                failed = True
-                continue
-
-            _write_provider_diagnostics(result.diagnostics, stderr, source=fit_file)
-
-            pending_reports.append(
-                _PendingReport(
-                    source=fit_file,
-                    output=output_path,
-                    markdown=result.markdown,
-                    matching_outputs=(output_path,),
-                )
-            )
+    for outcome in batch.execute(fit_files, naming):
+        if outcome.status is BatchReportStatus.SKIPPED_EXISTING:
             continue
 
-        try:
-            result = generator.execute_detailed(fit_file)
-            matching_outputs = _activity_time_output_candidates(
-                fit_file, result.report.summary.start_time
-            )
-            output_path = matching_outputs[0]
-        except (
-            InvalidActivityError,
-            OSError,
-            UnsupportedActivityError,
-            ActivityTimeUnavailableError,
-        ) as error:
-            _write_directory_processing_error(fit_file, error, stderr)
+        if outcome.status is BatchReportStatus.COLLISION:
+            assert outcome.output is not None
+            if outcome.output not in reported_collisions:
+                sources = ", ".join(str(source) for source in outcome.collision_sources)
+                print(
+                    f"Output path collision: {outcome.output} for inputs: {sources}",
+                    file=stderr,
+                )
+                reported_collisions.add(outcome.output)
             failed = True
             continue
 
-        _write_provider_diagnostics(result.diagnostics, stderr, source=fit_file)
-
-        if any(path.is_file() for path in matching_outputs):
-            continue
-        pending_reports.append(
-            _PendingReport(
-                source=fit_file,
-                output=output_path,
-                markdown=result.markdown,
-                matching_outputs=matching_outputs,
+        if outcome.generated is not None:
+            _write_provider_diagnostics(
+                outcome.generated.diagnostics,
+                stderr,
+                source=outcome.source,
             )
-        )
 
-    output_groups: dict[Path, list[_PendingReport]] = {}
-    for pending_report in pending_reports:
-        output_groups.setdefault(pending_report.output, []).append(pending_report)
-
-    colliding_outputs = {
-        output_path
-        for output_path, reports in output_groups.items()
-        if len(reports) > 1
-    }
-    for output_path in sorted(colliding_outputs):
-        sources = ", ".join(str(report.source) for report in output_groups[output_path])
-        print(
-            f"Output path collision: {output_path} for inputs: {sources}",
-            file=stderr,
-        )
-        failed = True
-
-    for pending_report in pending_reports:
-        if pending_report.output in colliding_outputs:
-            continue
-        if any(path.is_file() for path in pending_report.matching_outputs):
-            continue
-
-        try:
-            pending_report.output.write_text(
-                pending_report.markdown,
-                encoding="utf-8",
-            )
-        except OSError as error:
+        if outcome.status is BatchReportStatus.WRITE_FAILED:
+            assert outcome.output is not None
+            assert outcome.error is not None
             print(
-                f"Unable to write Markdown report: {pending_report.output}: {error}",
+                f"Unable to write Markdown report: {outcome.output}: {outcome.error}",
                 file=stderr,
             )
             failed = True
             continue
 
-        _write_markdown_to_stdout(pending_report.markdown, stdout)
+        if outcome.status is BatchReportStatus.PROCESSING_FAILED:
+            assert outcome.error is not None
+            _write_directory_processing_error(outcome.source, outcome.error, stderr)
+            failed = True
+            continue
+
+        assert outcome.status is BatchReportStatus.SUCCESS
+        assert outcome.generated is not None
+        _write_markdown_to_stdout(outcome.generated.markdown, stdout)
 
     _write_elevation_usage_summary(elevation_diagnostics, stderr)
     return 1 if failed else 0
@@ -496,15 +444,7 @@ def _output_path_from_activity_time(
 def _activity_time_output_candidates(
     input_path: Path, start_time: datetime | None
 ) -> tuple[Path, ...]:
-    if start_time is None:
-        raise ActivityTimeUnavailableError(
-            "Activity start time unavailable; cannot use activity time for output name."
-        )
-    portable_output = input_path.with_name(
-        f"{start_time.strftime('%Y-%m-%d %H-%M')}.md"
-    )
-    legacy_output = input_path.with_name(f"{start_time.strftime('%Y-%m-%d %H:%M')}.md")
-    return portable_output, legacy_output
+    return activity_time_output_candidates(input_path, start_time)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

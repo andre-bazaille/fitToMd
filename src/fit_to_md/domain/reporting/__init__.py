@@ -10,6 +10,7 @@ from fit_to_md.domain.reporting.services import (
     SessionSummaryBuilder,
     SplitBuilder,
     TransitionBuilder,
+    resolve_activity_start_time,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "TransitionDynamics",
     "TransitionBuilder",
     "TransitionSample",
+    "resolve_activity_start_time",
 ]

@@ -55,7 +55,7 @@ class SessionSummaryBuilder:
 
     def build(self, activity: Activity) -> SessionSummary:
         session = activity.session
-        start_time = _resolve_start_time(activity)
+        start_time = resolve_activity_start_time(activity)
 
         activity_type = _resolve_activity_type(activity)
         total_distance_m = session.total_distance_m
@@ -427,7 +427,8 @@ def _resolve_split_duration_s(
     return lap_duration_s
 
 
-def _resolve_start_time(activity: Activity) -> datetime | None:
+def resolve_activity_start_time(activity: Activity) -> datetime | None:
+    """Resolve the report start time without building the rest of the summary."""
     session = activity.session
     if session.start_time is not None:
         return session.start_time

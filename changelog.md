@@ -1,5 +1,9 @@
 ## 2026-09-17
 
+- Moved directory output planning and execution into an application batch use
+  case with typed per-file outcomes and a Markdown writer port; existing and
+  colliding activity-time outputs now avoid enrichment and rendering, while
+  accepted reports are generated and written incrementally.
 - Added typed activity-read failures and provider lookup results, preserving
   partial enrichment values with diagnostics for unavailable services, invalid
   responses, quota exhaustion, and missing coverage; degraded reports now warn

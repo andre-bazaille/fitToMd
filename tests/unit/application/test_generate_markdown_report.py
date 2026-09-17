@@ -140,6 +140,28 @@ def test_generate_markdown_report_reads_assembles_and_renders() -> None:
     assert report.summary.total_distance_km == 1.0
 
 
+def test_inspect_reads_start_time_without_enrichment_or_rendering() -> None:
+    reader = StubReader(_activity())
+    renderer = StubRenderer()
+    weather_provider = StubWeatherProvider(None)
+    elevation_provider = StubElevationProvider((200.0, 220.0))
+    use_case = GenerateMarkdownReport(
+        reader=reader,
+        renderer=renderer,
+        weather_provider=weather_provider,
+        elevation_provider=elevation_provider,
+        elevation_mode="dem",
+    )
+
+    metadata = use_case.inspect(Path("activity.fit"))
+
+    assert metadata.start_time == datetime(2026, 9, 17, 8, 0)
+    assert reader.calls == [Path("activity.fit")]
+    assert weather_provider.calls == []
+    assert elevation_provider.calls == []
+    assert renderer.calls == []
+
+
 def test_historical_weather_enriches_missing_native_temperature() -> None:
     weather = WeatherSummary(
         source="Historical weather",

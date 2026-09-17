@@ -55,10 +55,11 @@ target-state diagram.
 
 ```mermaid
 flowchart LR
-    CLI[fit-to-md CLI composition root] --> BATCH[Directory batch workflow]
+    CLI[fit-to-md CLI composition root] --> BATCH[GenerateMarkdownReportBatch]
     CLI --> APP[GenerateMarkdownReport]
     BATCH --> APP
-    BATCH --> FILES[Existing-file checks, collision handling, and Markdown writes]
+    BATCH --> WRITER[MarkdownReportWriter port]
+    WRITER -. implemented by .-> FILES[Local Markdown writer]
     APP --> READER[ActivityReader port]
     APP --> RENDERER[ReportRenderer port]
     APP --> SERVICES[Reporting domain services]
@@ -80,12 +81,18 @@ that explicit handle to register progress output and format structured run
 statistics. It does not discover diagnostics by inspecting generator or
 reader internals, and providers do not return user-facing usage text.
 
-Directory batch processing currently belongs to `fit_to_md.cli`, not to an
-application use case. The CLI enumerates direct-child FIT files in filename
-order, chooses output names, recognizes current and legacy activity-time names,
-skips existing reports, detects output collisions, continues after individual
-failures, writes successful Markdown reports, and chooses the final exit status.
-The application use case still handles one source file at a time.
+Directory batch policy belongs to `GenerateMarkdownReportBatch`. It plans output
+names for all sources, recognizes current and legacy activity-time names, skips
+existing reports, rejects collisions before enrichment or rendering, continues
+after expected per-file failures, and writes accepted reports incrementally
+through `MarkdownReportWriter`. The CLI enumerates sorted direct-child FIT files,
+renders typed outcomes for the user, and chooses the final exit status.
+
+`GenerateMarkdownReport.inspect` decodes an activity and returns only the
+effective report start time. Batch planning can therefore determine activity-time
+destinations without weather or elevation calls and without rendering Markdown.
+Accepted files may be decoded again during generation so the batch does not
+retain every decoded activity or rendered report in memory.
 
 The Activity context owns the `ActivityReader` port. `FitdecodeActivityReader`
 implements it by translating FIT fields into decoder-independent `Activity`
@@ -120,13 +127,6 @@ paths and timestamps, constructs `FitdecodeFixtureSanitizer`, and injects it int
 default privacy policy, and invokes the port. The infrastructure adapter applies
 that policy while rebuilding a valid FIT binary.
 
-## Target Direction
-
-The activity-reader and application-owned report orchestration proposed by
-AR-01 are now implemented. The remaining application-layer ownership change is
-to move directory planning and execution into an application use case so output
-eligibility and collisions can be decided before enrichment and rendering.
-
 ## Dependency Rules
 
 - Domain modules may depend only on the standard library and other domain modules.
@@ -135,7 +135,7 @@ eligibility and collisions can be decided before enrichment and rendering.
 - Each CLI is a composition root and owns concrete wiring and configuration.
 - Reporting may depend on Activity. Activity may not depend on Reporting.
 - Privacy may not depend on, or be depended on by, Activity or Reporting.
-- Directory batch planning, output policy, and partial-failure handling currently belong to the report CLI.
+- Directory batch planning, output policy, and partial-failure handling belong to the application layer; the CLI owns source discovery and presentation.
 - External HTTP behavior must be covered with fakes; tests must not require live network access.
 
 `tests/unit/domain/test_architecture.py` resolves both absolute and relative

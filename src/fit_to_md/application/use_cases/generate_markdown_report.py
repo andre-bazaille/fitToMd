@@ -1,5 +1,5 @@
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from math import isfinite
 from pathlib import Path
 
@@ -17,6 +17,7 @@ from fit_to_md.domain.reporting.services import (
     SessionSummaryBuilder,
     SplitBuilder,
     TransitionBuilder,
+    resolve_activity_start_time,
 )
 
 
@@ -25,6 +26,11 @@ class GeneratedMarkdownReport:
     report: FitReport
     markdown: str
     diagnostics: tuple[ProviderDiagnostic, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReportGenerationMetadata:
+    start_time: datetime | None
 
 
 class GenerateMarkdownReport:
@@ -61,6 +67,13 @@ class GenerateMarkdownReport:
 
     def execute(self, source: Path) -> str:
         return self.execute_detailed(source).markdown
+
+    def inspect(self, source: Path) -> ReportGenerationMetadata:
+        """Read an activity and return only the metadata needed for planning."""
+        activity = self._reader.read(source)
+        return ReportGenerationMetadata(
+            start_time=resolve_activity_start_time(activity),
+        )
 
     def execute_with_report(self, source: Path) -> tuple[FitReport, str]:
         result = self.execute_detailed(source)
