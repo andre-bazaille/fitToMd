@@ -8,6 +8,7 @@ import pytest
 import fit_to_md.cli as cli
 from fit_to_md.cli import build_default_generator, build_parser, run
 from fit_to_md.domain.reporting.entities import FitReport, SessionSummary
+from fit_to_md.domain.reporting.ports import ElevationRunStatistics
 from fit_to_md.infrastructure.weather import OpenMeteoHistoricalWeatherProvider
 
 
@@ -56,26 +57,28 @@ class StubGeneratorWithReports:
         return self.reports_by_source[source], self.markdown_by_source[source]
 
 
-class StubElevationProvider:
-    def __init__(self, summary: str) -> None:
-        self._summary = summary
+class StubElevationDiagnostics:
+    def __init__(
+        self,
+        *,
+        provider_name: str = "Terrain Service",
+        request_count: int = 3,
+        request_limit: int | None = 1000,
+    ) -> None:
+        self._statistics = ElevationRunStatistics(
+            provider_name=provider_name,
+            request_count=request_count,
+            request_limit=request_limit,
+        )
         self.progress_updates: list[tuple[int, int]] = []
 
-    def usage_summary(self) -> str:
-        return self._summary
+    def run_statistics(self) -> ElevationRunStatistics:
+        return self._statistics
 
     def set_progress_callback(self, callback) -> None:
         callback(1, 3)
         callback(2, 3)
         self.progress_updates.extend([(1, 3), (2, 3)])
-
-
-class StubGeneratorWithElevationUsage(StubGenerator):
-    def __init__(self, markdown: str, summary: str) -> None:
-        super().__init__(markdown)
-        self._extractor = type(
-            "Extractor", (), {"_elevation_provider": StubElevationProvider(summary)}
-        )()
 
 
 def test_run_writes_markdown_to_default_output_file(tmp_path: Path) -> None:
@@ -249,14 +252,13 @@ def test_run_reports_elevation_api_usage_to_stderr(tmp_path: Path) -> None:
     stdout = io.StringIO()
     stderr = io.StringIO()
     expected_output = tmp_path / "activity.md"
-    generator = StubGeneratorWithElevationUsage(
-        "# FIT Report\n",
-        "OpenTopoData public API calls this run: 3/1000 (daily usage is not persisted by the CLI).",
-    )
+    generator = StubGenerator("# FIT Report\n")
+    diagnostics = StubElevationDiagnostics(provider_name="Contour Cloud")
 
     exit_code = run(
         argv=[str(fit_file)],
         report_generator=generator,
+        elevation_diagnostics=diagnostics,
         stdout=stdout,
         stderr=stderr,
     )
@@ -265,10 +267,32 @@ def test_run_reports_elevation_api_usage_to_stderr(tmp_path: Path) -> None:
     assert stdout.getvalue() == "# FIT Report\n"
     assert expected_output.read_text(encoding="utf-8") == "# FIT Report\n"
     assert stderr.getvalue() == (
-        "OpenTopoData progress: request 1/3\n"
-        "OpenTopoData progress: request 2/3\n"
-        "OpenTopoData public API calls this run: 3/1000 (daily usage is not persisted by the CLI).\n"
+        "Contour Cloud progress: request 1/3\n"
+        "Contour Cloud progress: request 2/3\n"
+        "Contour Cloud public API calls this run: 3/1000 (daily usage is not persisted by the CLI).\n"
     )
+    assert diagnostics.progress_updates == [(1, 3), (2, 3)]
+
+
+def test_run_reports_unlimited_elevation_usage_to_stderr(tmp_path: Path) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(fit_file)],
+        report_generator=StubGenerator("# FIT Report\n"),
+        elevation_diagnostics=StubElevationDiagnostics(
+            provider_name="Self-hosted Terrain",
+            request_count=2,
+            request_limit=None,
+        ),
+        stdout=io.StringIO(),
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    assert stderr.getvalue().endswith("Self-hosted Terrain requests this run: 2.\n")
 
 
 def test_run_returns_error_for_missing_input(tmp_path: Path) -> None:
@@ -335,6 +359,30 @@ def test_run_processes_sorted_direct_fit_children_and_skips_existing_reports(
     assert not nested_fit.with_suffix(".md").exists()
     assert stdout.getvalue() == "# A report\n# B report\n"
     assert stderr.getvalue() == ""
+
+
+def test_directory_run_reports_usage_through_explicit_diagnostics(
+    tmp_path: Path,
+) -> None:
+    fit_file = tmp_path / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    diagnostics = StubElevationDiagnostics(
+        provider_name="Batch Terrain",
+        request_count=4,
+        request_limit=None,
+    )
+    stderr = io.StringIO()
+
+    exit_code = run(
+        argv=[str(tmp_path)],
+        report_generator=StubGenerator("# report"),
+        elevation_diagnostics=diagnostics,
+        stdout=io.StringIO(),
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    assert stderr.getvalue().endswith("Batch Terrain requests this run: 4.\n")
 
 
 def test_run_rejects_manual_output_for_directory_input(tmp_path: Path) -> None:
@@ -700,7 +748,7 @@ def test_run_passes_transition_options_to_default_generator(
     stderr = io.StringIO()
     calls: list[tuple[int, str, float, float, str, float, str, str]] = []
 
-    def fake_build_default_generator(
+    def fake_build_default_runtime(
         dynamics_step_size: int = 30,
         weather_mode: str = "fit",
         elevation_smoothing_distance: float = 170.0,
@@ -709,7 +757,7 @@ def test_run_passes_transition_options_to_default_generator(
         dem_sample_distance: float = 25.0,
         opentopodata_dataset: str = "eudem25m",
         opentopodata_base_url: str = "https://api.opentopodata.org",
-    ) -> StubGenerator:
+    ) -> cli._DefaultRuntime:
         calls.append(
             (
                 dynamics_step_size,
@@ -722,9 +770,9 @@ def test_run_passes_transition_options_to_default_generator(
                 opentopodata_base_url,
             )
         )
-        return StubGenerator("# FIT Report\n")
+        return cli._DefaultRuntime(StubGenerator("# FIT Report\n"), None)
 
-    monkeypatch.setattr(cli, "build_default_generator", fake_build_default_generator)
+    monkeypatch.setattr(cli, "_build_default_runtime", fake_build_default_runtime)
 
     exit_code = run(
         argv=[
@@ -778,7 +826,7 @@ def test_run_loads_default_options_from_config_file(
     )
     calls: list[tuple[int, str, str]] = []
 
-    def fake_build_default_generator(**options) -> StubGenerator:
+    def fake_build_default_runtime(**options) -> cli._DefaultRuntime:
         calls.append(
             (
                 options["dynamics_step_size"],
@@ -786,9 +834,9 @@ def test_run_loads_default_options_from_config_file(
                 options["elevation_source"],
             )
         )
-        return StubGenerator("# FIT Report\n")
+        return cli._DefaultRuntime(StubGenerator("# FIT Report\n"), None)
 
-    monkeypatch.setattr(cli, "build_default_generator", fake_build_default_generator)
+    monkeypatch.setattr(cli, "_build_default_runtime", fake_build_default_runtime)
 
     exit_code = run(argv=[str(fit_file), "--config", str(config_file)])
 
@@ -840,11 +888,11 @@ def test_explicit_command_line_option_overrides_config_file(
     config_file.write_text("dynamics-step-size = 8\n", encoding="utf-8")
     configured_step_sizes: list[int] = []
 
-    def fake_build_default_generator(**options) -> StubGenerator:
+    def fake_build_default_runtime(**options) -> cli._DefaultRuntime:
         configured_step_sizes.append(options["dynamics_step_size"])
-        return StubGenerator("# FIT Report\n")
+        return cli._DefaultRuntime(StubGenerator("# FIT Report\n"), None)
 
-    monkeypatch.setattr(cli, "build_default_generator", fake_build_default_generator)
+    monkeypatch.setattr(cli, "_build_default_runtime", fake_build_default_runtime)
 
     exit_code = run(
         argv=[
@@ -897,6 +945,12 @@ def test_build_default_generator_configures_transition_builder() -> None:
     assert extractor._elevation_sample_distance_m == 25.0
     assert extractor._elevation_provider._dataset == "copernicus"
     assert extractor._elevation_provider._base_url == "https://elevation.internal"
+
+
+def test_default_runtime_retains_explicit_elevation_diagnostics_handle() -> None:
+    runtime = cli._build_default_runtime(elevation_source="hybrid")
+
+    assert isinstance(runtime.elevation_diagnostics, cli.OpenTopoDataElevationProvider)
 
 
 def test_run_rejects_invalid_elevation_min_change(tmp_path: Path) -> None:

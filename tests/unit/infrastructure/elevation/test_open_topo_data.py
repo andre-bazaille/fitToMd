@@ -4,7 +4,10 @@ from urllib.request import Request
 
 import pytest
 
-from fit_to_md.domain.reporting.ports import ElevationCoordinate
+from fit_to_md.domain.reporting.ports import (
+    ElevationCoordinate,
+    ElevationRunStatistics,
+)
 from fit_to_md.infrastructure.elevation.open_topo_data import (
     OpenTopoDataElevationProvider,
 )
@@ -264,7 +267,7 @@ def test_open_topo_data_public_api_rejects_more_than_1000_calls_in_one_run() -> 
     assert "more than 1000 requests" in str(error.value)
 
 
-def test_open_topo_data_provider_tracks_usage_summary() -> None:
+def test_open_topo_data_provider_tracks_public_api_run_statistics() -> None:
     def fake_urlopen(request: Request, timeout: int):
         return FakeResponse(
             {
@@ -277,8 +280,20 @@ def test_open_topo_data_provider_tracks_usage_summary() -> None:
 
     provider.lookup((ElevationCoordinate(latitude_deg=45.0, longitude_deg=7.0),))
 
-    assert provider.usage_summary() == (
-        "OpenTopoData public API calls this run: 1/1000 (daily usage is not persisted by the CLI)."
+    assert provider.run_statistics() == ElevationRunStatistics(
+        provider_name="OpenTopoData",
+        request_count=1,
+        request_limit=1000,
+    )
+
+
+def test_open_topo_data_provider_tracks_self_hosted_run_statistics() -> None:
+    provider = OpenTopoDataElevationProvider(base_url="https://elevation.internal")
+
+    assert provider.run_statistics() == ElevationRunStatistics(
+        provider_name="OpenTopoData",
+        request_count=0,
+        request_limit=None,
     )
 
 

@@ -12,6 +12,7 @@ import fitdecode
 from fit_to_md.application.use_cases.generate_markdown_report import (
     GenerateMarkdownReport,
 )
+from fit_to_md.domain.reporting.ports import ElevationDiagnostics
 from fit_to_md.domain.reporting.services import SessionSummaryBuilder, TransitionBuilder
 from fit_to_md.infrastructure.config import ConfigFileError, load_option_file
 from fit_to_md.infrastructure.elevation import OpenTopoDataElevationProvider
@@ -42,6 +43,12 @@ class _PendingReport:
     output: Path
     markdown: str
     matching_outputs: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class _DefaultRuntime:
+    generator: GenerateMarkdownReport
+    elevation_diagnostics: ElevationDiagnostics | None
 
 
 def _positive_int(value: str) -> int:
@@ -153,6 +160,28 @@ def build_default_generator(
     opentopodata_dataset: str = "eudem25m",
     opentopodata_base_url: str = "https://api.opentopodata.org",
 ) -> GenerateMarkdownReport:
+    return _build_default_runtime(
+        dynamics_step_size=dynamics_step_size,
+        weather_mode=weather_mode,
+        elevation_smoothing_distance=elevation_smoothing_distance,
+        elevation_min_change=elevation_min_change,
+        elevation_source=elevation_source,
+        dem_sample_distance=dem_sample_distance,
+        opentopodata_dataset=opentopodata_dataset,
+        opentopodata_base_url=opentopodata_base_url,
+    ).generator
+
+
+def _build_default_runtime(
+    dynamics_step_size: int = 30,
+    weather_mode: str = "fit",
+    elevation_smoothing_distance: float = 170.0,
+    elevation_min_change: float = 0.4,
+    elevation_source: str = "fit",
+    dem_sample_distance: float = 25.0,
+    opentopodata_dataset: str = "eudem25m",
+    opentopodata_base_url: str = "https://api.opentopodata.org",
+) -> _DefaultRuntime:
     weather_provider = (
         OpenMeteoHistoricalWeatherProvider() if weather_mode == "auto" else None
     )
@@ -178,12 +207,16 @@ def build_default_generator(
         elevation_sample_distance_m=dem_sample_distance,
     )
     renderer = MarkdownReportRenderer()
-    return GenerateMarkdownReport(extractor=extractor, renderer=renderer)
+    return _DefaultRuntime(
+        generator=GenerateMarkdownReport(extractor=extractor, renderer=renderer),
+        elevation_diagnostics=elevation_provider,
+    )
 
 
 def run(
     argv: Sequence[str] | None = None,
     report_generator: GenerateMarkdownReport | None = None,
+    elevation_diagnostics: ElevationDiagnostics | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -221,23 +254,30 @@ def run(
         if not fit_files:
             return 0
 
-    generator = report_generator or build_default_generator(
-        dynamics_step_size=args.dynamics_step_size,
-        weather_mode=args.weather_mode,
-        elevation_smoothing_distance=args.elevation_smoothing_distance,
-        elevation_min_change=args.elevation_min_change,
-        elevation_source=args.elevation_source,
-        dem_sample_distance=args.dem_sample_distance,
-        opentopodata_dataset=args.opentopodata_dataset,
-        opentopodata_base_url=args.opentopodata_base_url,
-    )
-    _configure_elevation_progress(generator, stderr)
+    if report_generator is None:
+        runtime = _build_default_runtime(
+            dynamics_step_size=args.dynamics_step_size,
+            weather_mode=args.weather_mode,
+            elevation_smoothing_distance=args.elevation_smoothing_distance,
+            elevation_min_change=args.elevation_min_change,
+            elevation_source=args.elevation_source,
+            dem_sample_distance=args.dem_sample_distance,
+            opentopodata_dataset=args.opentopodata_dataset,
+            opentopodata_base_url=args.opentopodata_base_url,
+        )
+        generator = runtime.generator
+        if elevation_diagnostics is None:
+            elevation_diagnostics = runtime.elevation_diagnostics
+    else:
+        generator = report_generator
+    _configure_elevation_progress(elevation_diagnostics, stderr)
 
     if is_directory:
         return _run_directory(
             fit_files,
             generator,
             output_by_activity_time=args.output_by_activity_time,
+            elevation_diagnostics=elevation_diagnostics,
             stdout=stdout,
             stderr=stderr,
         )
@@ -276,7 +316,7 @@ def run(
         return 1
 
     _write_markdown_to_stdout(markdown, stdout)
-    _write_elevation_usage_summary(generator, stderr)
+    _write_elevation_usage_summary(elevation_diagnostics, stderr)
     return 0
 
 
@@ -306,6 +346,7 @@ def _run_directory(
     generator: GenerateMarkdownReport,
     *,
     output_by_activity_time: bool,
+    elevation_diagnostics: ElevationDiagnostics | None,
     stdout: TextIO,
     stderr: TextIO,
 ) -> int:
@@ -405,7 +446,7 @@ def _run_directory(
 
         _write_markdown_to_stdout(pending_report.markdown, stdout)
 
-    _write_elevation_usage_summary(generator, stderr)
+    _write_elevation_usage_summary(elevation_diagnostics, stderr)
     return 1 if failed else 0
 
 
@@ -483,44 +524,37 @@ def _arguments_with_config_defaults(
 
 
 def _write_elevation_usage_summary(
-    generator: GenerateMarkdownReport, stream: TextIO
+    diagnostics: ElevationDiagnostics | None, stream: TextIO
 ) -> None:
-    extractor = getattr(generator, "_extractor", None)
-    if extractor is None:
+    if diagnostics is None:
         return
 
-    elevation_provider = getattr(extractor, "_elevation_provider", None)
-    if elevation_provider is None:
-        return
-
-    usage_summary_fn = getattr(elevation_provider, "usage_summary", None)
-    if not callable(usage_summary_fn):
-        return
-
-    print(usage_summary_fn(), file=stream)
+    statistics = diagnostics.run_statistics()
+    if statistics.request_limit is None:
+        summary = (
+            f"{statistics.provider_name} requests this run: {statistics.request_count}."
+        )
+    else:
+        summary = (
+            f"{statistics.provider_name} public API calls this run: "
+            f"{statistics.request_count}/{statistics.request_limit} "
+            "(daily usage is not persisted by the CLI)."
+        )
+    print(summary, file=stream)
 
 
 def _configure_elevation_progress(
-    generator: GenerateMarkdownReport, stream: TextIO
+    diagnostics: ElevationDiagnostics | None, stream: TextIO
 ) -> None:
-    extractor = getattr(generator, "_extractor", None)
-    if extractor is None:
+    if diagnostics is None:
         return
 
-    elevation_provider = getattr(extractor, "_elevation_provider", None)
-    if elevation_provider is None:
-        return
-
-    set_progress_callback_fn = getattr(
-        elevation_provider, "set_progress_callback", None
-    )
-    if not callable(set_progress_callback_fn):
-        return
+    provider_name = diagnostics.run_statistics().provider_name
 
     def _write_progress(current_request: int, total_requests: int) -> None:
         print(
-            f"OpenTopoData progress: request {current_request}/{total_requests}",
+            f"{provider_name} progress: request {current_request}/{total_requests}",
             file=stream,
         )
 
-    set_progress_callback_fn(_write_progress)
+    diagnostics.set_progress_callback(_write_progress)

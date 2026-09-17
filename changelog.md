@@ -1,3 +1,14 @@
+## 2026-09-17
+
+- Replaced private generator/extractor inspection for elevation progress and
+  usage reporting with an explicit typed diagnostics handle, structured run
+  statistics, and CLI-owned user-facing formatting.
+- Strengthening enforcement across domain and application modules, including relative imports, external
+  domain dependencies, and the permitted bounded-context dependency direction.
+- Expanded the architecture guide with the Privacy context, report and sanitizer
+  composition roots, current CLI-owned batch workflow, permitted context
+  dependencies, and a separate description of proposed application ownership.
+
 ## 2026-09-16
 
 - Preserved active durations from exactly aligned kilometer laps when record

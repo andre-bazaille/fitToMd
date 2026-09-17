@@ -5,7 +5,10 @@ from time import monotonic, sleep
 from typing import Any
 from urllib.request import Request, urlopen
 
-from fit_to_md.domain.reporting.ports import ElevationCoordinate
+from fit_to_md.domain.reporting.ports import (
+    ElevationCoordinate,
+    ElevationRunStatistics,
+)
 
 _PUBLIC_API_BASE_URL = "https://api.opentopodata.org"
 _PUBLIC_API_MAX_BATCH_SIZE = 100
@@ -86,13 +89,14 @@ class OpenTopoDataElevationProvider:
     def request_count(self) -> int:
         return self._request_count
 
-    def usage_summary(self) -> str:
-        if self.is_public_api:
-            return (
-                f"OpenTopoData public API calls this run: {self._request_count}/{_PUBLIC_API_MAX_CALLS_PER_RUN} "
-                "(daily usage is not persisted by the CLI)."
-            )
-        return f"OpenTopoData requests this run: {self._request_count}."
+    def run_statistics(self) -> ElevationRunStatistics:
+        return ElevationRunStatistics(
+            provider_name="OpenTopoData",
+            request_count=self._request_count,
+            request_limit=(
+                _PUBLIC_API_MAX_CALLS_PER_RUN if self.is_public_api else None
+            ),
+        )
 
     def set_progress_callback(
         self, callback: Callable[[int, int], None] | None

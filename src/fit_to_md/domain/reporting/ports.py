@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +11,21 @@ from fit_to_md.domain.reporting.entities import FitReport, WeatherSummary
 class ElevationCoordinate:
     latitude_deg: float
     longitude_deg: float
+
+
+@dataclass(frozen=True)
+class ElevationRunStatistics:
+    provider_name: str
+    request_count: int
+    request_limit: int | None
+
+
+class ElevationDiagnostics(Protocol):
+    def set_progress_callback(
+        self, callback: Callable[[int, int], None] | None
+    ) -> None: ...
+
+    def run_statistics(self) -> ElevationRunStatistics: ...
 
 
 class ActivityExtractor(Protocol):
