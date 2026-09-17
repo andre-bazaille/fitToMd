@@ -1,8 +1,10 @@
 import json
 import math
 from collections.abc import Callable, Sequence
+from http.client import HTTPException
 from time import monotonic, sleep
 from typing import Any
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from fit_to_md.domain.reporting.ports import (
@@ -85,7 +87,20 @@ class OpenTopoDataElevationProvider:
             try:
                 with self._urlopen_fn(request, timeout=self._timeout_s) as response:
                     payload = json.load(response)
-            except (OSError, TimeoutError) as error:
+            except HTTPError as error:
+                elevations.extend([None] * len(batch))
+                kind = (
+                    ProviderDiagnosticKind.QUOTA_EXCEEDED
+                    if error.code == 429
+                    else ProviderDiagnosticKind.PROVIDER_UNAVAILABLE
+                )
+                _append_diagnostic_once(
+                    diagnostics,
+                    kind,
+                    f"elevation request failed with HTTP {error.code}: {error.reason}",
+                )
+                continue
+            except (HTTPException, OSError, TimeoutError) as error:
                 elevations.extend([None] * len(batch))
                 _append_diagnostic_once(
                     diagnostics,
@@ -223,13 +238,30 @@ def _parse_elevations(
             "elevation response has an invalid results structure",
         )
 
-    elevations = [
-        _to_float(result.get("elevation")) if isinstance(result, dict) else None
-        for result in results
-    ]
+    malformed = len(results) != expected_count
+    elevations: list[float | None] = []
+    for result in results:
+        if not isinstance(result, dict) or "elevation" not in result:
+            malformed = True
+            elevations.append(None)
+            continue
+        raw_elevation = result["elevation"]
+        elevation = _to_float(raw_elevation)
+        if raw_elevation is not None and elevation is None:
+            malformed = True
+        elevations.append(elevation)
     if len(elevations) < expected_count:
         elevations.extend([None] * (expected_count - len(elevations)))
-    return elevations[:expected_count], None
+    diagnostic = (
+        ProviderDiagnostic(
+            _PROVIDER_NAME,
+            ProviderDiagnosticKind.INVALID_RESPONSE,
+            "elevation response contains malformed results; valid values were preserved",
+        )
+        if malformed
+        else None
+    )
+    return elevations[:expected_count], diagnostic
 
 
 def _append_diagnostic_once(

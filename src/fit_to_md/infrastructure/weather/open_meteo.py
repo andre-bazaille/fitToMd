@@ -3,8 +3,10 @@ import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from http.client import HTTPException
 from statistics import mean
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
@@ -61,7 +63,17 @@ class OpenMeteoHistoricalWeatherProvider:
         try:
             with self._urlopen_fn(url, timeout=self._timeout_s) as response:
                 payload = json.load(response)
-        except (OSError, TimeoutError) as error:
+        except HTTPError as error:
+            kind = (
+                ProviderDiagnosticKind.QUOTA_EXCEEDED
+                if error.code == 429
+                else ProviderDiagnosticKind.PROVIDER_UNAVAILABLE
+            )
+            return _failure_result(
+                kind,
+                f"historical weather request failed with HTTP {error.code}: {error.reason}",
+            )
+        except (HTTPException, OSError, TimeoutError) as error:
             return _failure_result(
                 ProviderDiagnosticKind.PROVIDER_UNAVAILABLE,
                 f"historical weather request failed: {error}",
@@ -78,11 +90,19 @@ class OpenMeteoHistoricalWeatherProvider:
                 "historical weather response has an invalid structure",
             )
 
-        samples = _parse_samples(payload)
+        samples, has_malformed_data = _parse_samples(payload)
         if not samples:
             return _failure_result(
-                ProviderDiagnosticKind.NO_COVERAGE,
-                "historical weather data is unavailable for this activity",
+                (
+                    ProviderDiagnosticKind.INVALID_RESPONSE
+                    if has_malformed_data
+                    else ProviderDiagnosticKind.NO_COVERAGE
+                ),
+                (
+                    "historical weather response contains malformed hourly data"
+                    if has_malformed_data
+                    else "historical weather data is unavailable for this activity"
+                ),
             )
 
         window_start = normalized_start.replace(minute=0, second=0, microsecond=0)
@@ -119,6 +139,17 @@ class OpenMeteoHistoricalWeatherProvider:
             )
         )
 
+        diagnostics = (
+            (
+                ProviderDiagnostic(
+                    _PROVIDER_NAME,
+                    ProviderDiagnosticKind.INVALID_RESPONSE,
+                    "historical weather response contains malformed hourly data; valid values were preserved",
+                ),
+            )
+            if has_malformed_data
+            else ()
+        )
         return ProviderLookupResult(
             value=WeatherSummary(
                 source="historical",
@@ -136,6 +167,7 @@ class OpenMeteoHistoricalWeatherProvider:
                     sample.temperature_c for sample in window_samples
                 ),
             ),
+            diagnostics=diagnostics,
         )
 
     def _build_url(
@@ -192,43 +224,76 @@ def _has_valid_payload_shape(payload: Any) -> bool:
     return isinstance(hourly.get("time"), list)
 
 
-def _parse_samples(payload: Any) -> list[_HourlyWeatherSample]:
+def _parse_samples(payload: Any) -> tuple[list[_HourlyWeatherSample], bool]:
     if not isinstance(payload, dict):
-        return []
+        return [], True
 
     hourly = payload.get("hourly")
     if not isinstance(hourly, dict):
-        return []
+        return [], True
 
     times = hourly.get("time")
     if not isinstance(times, list):
-        return []
+        return [], True
 
-    temperatures = _as_list(hourly.get("temperature_2m"), len(times))
-    apparent_temperatures = _as_list(hourly.get("apparent_temperature"), len(times))
-    weather_codes = _as_list(hourly.get("weather_code"), len(times))
-    wind_speeds = _as_list(hourly.get("wind_speed_10m"), len(times))
-    wind_directions = _as_list(hourly.get("wind_direction_10m"), len(times))
+    if not times:
+        return [], False
+
+    raw_series = (
+        hourly.get("temperature_2m"),
+        hourly.get("apparent_temperature"),
+        hourly.get("weather_code"),
+        hourly.get("wind_speed_10m"),
+        hourly.get("wind_direction_10m"),
+    )
+    normalized_series = tuple(_as_list(value, len(times)) for value in raw_series)
+    temperatures, apparent_temperatures, weather_codes, wind_speeds, wind_directions = (
+        series for series, _ in normalized_series
+    )
+    has_malformed_data = any(malformed for _, malformed in normalized_series)
 
     samples: list[_HourlyWeatherSample] = []
     for index, raw_time in enumerate(times):
         if not isinstance(raw_time, str):
+            has_malformed_data = True
             continue
         try:
             timestamp = datetime.fromisoformat(raw_time).replace(tzinfo=UTC)
         except ValueError:
+            has_malformed_data = True
             continue
+        converted_values = (
+            _to_float(temperatures[index]),
+            _to_float(apparent_temperatures[index]),
+            _to_int(weather_codes[index]),
+            _to_float(wind_speeds[index]),
+            _to_float(wind_directions[index]),
+        )
+        raw_values = (
+            temperatures[index],
+            apparent_temperatures[index],
+            weather_codes[index],
+            wind_speeds[index],
+            wind_directions[index],
+        )
+        if any(
+            raw_value is not None and converted_value is None
+            for raw_value, converted_value in zip(
+                raw_values, converted_values, strict=True
+            )
+        ):
+            has_malformed_data = True
         sample = _HourlyWeatherSample(
             timestamp=timestamp,
-            temperature_c=_to_float(temperatures[index]),
-            apparent_temperature_c=_to_float(apparent_temperatures[index]),
-            weather_code=_to_int(weather_codes[index]),
-            wind_speed_kmh=_to_float(wind_speeds[index]),
-            wind_direction_deg=_to_float(wind_directions[index]),
+            temperature_c=converted_values[0],
+            apparent_temperature_c=converted_values[1],
+            weather_code=converted_values[2],
+            wind_speed_kmh=converted_values[3],
+            wind_direction_deg=converted_values[4],
         )
         if _has_usable_weather(sample):
             samples.append(sample)
-    return samples
+    return samples, has_malformed_data
 
 
 def _has_usable_weather(sample: _HourlyWeatherSample) -> bool:
@@ -244,12 +309,13 @@ def _has_usable_weather(sample: _HourlyWeatherSample) -> bool:
     )
 
 
-def _as_list(value: Any, length: int) -> list[Any]:
+def _as_list(value: Any, length: int) -> tuple[list[Any], bool]:
     if not isinstance(value, list):
-        return [None] * length
+        return [None] * length, True
+    malformed = len(value) != length
     if len(value) < length:
-        return value + ([None] * (length - len(value)))
-    return value
+        return value + ([None] * (length - len(value))), malformed
+    return value[:length], malformed
 
 
 def _nearest_sample(

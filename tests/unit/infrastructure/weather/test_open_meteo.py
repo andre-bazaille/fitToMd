@@ -1,6 +1,8 @@
 import io
 import json
 from datetime import UTC, datetime
+from http.client import IncompleteRead
+from urllib.error import HTTPError
 
 import pytest
 
@@ -34,7 +36,7 @@ class RawResponse:
         return None
 
 
-def _lookup_weather(payload: object):
+def _lookup_weather_result(payload: object):
     provider = OpenMeteoHistoricalWeatherProvider(
         urlopen_fn=lambda *args, **kwargs: FakeResponse(payload)
     )
@@ -43,7 +45,11 @@ def _lookup_weather(payload: object):
         end_time=datetime(2026, 3, 24, 12, 21, tzinfo=UTC),
         latitude_deg=48.877191,
         longitude_deg=2.293044,
-    ).value
+    )
+
+
+def _lookup_weather(payload: object):
+    return _lookup_weather_result(payload).value
 
 
 def test_open_meteo_provider_parses_hourly_weather() -> None:
@@ -120,7 +126,7 @@ def test_open_meteo_provider_returns_none_for_unusable_nested_values(
 
 
 def test_open_meteo_provider_keeps_valid_fields_from_partial_sample() -> None:
-    weather = _lookup_weather(
+    result = _lookup_weather_result(
         {
             "hourly": {
                 "time": ["2026-03-24T11:00"],
@@ -133,12 +139,32 @@ def test_open_meteo_provider_keeps_valid_fields_from_partial_sample() -> None:
         }
     )
 
+    weather = result.value
     assert weather is not None
     assert weather.temperature_c == 15.2
     assert weather.apparent_temperature_c is None
     assert weather.condition_summary is None
     assert weather.wind_speed_kmh is None
     assert weather.wind_direction_label is None
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.INVALID_RESPONSE
+
+
+def test_open_meteo_provider_classifies_malformed_series_as_invalid_response() -> None:
+    result = _lookup_weather_result(
+        {
+            "hourly": {
+                "time": ["2026-03-24T11:00"],
+                "temperature_2m": "15.2",
+                "apparent_temperature": [None],
+                "weather_code": [None],
+                "wind_speed_10m": [None],
+                "wind_direction_10m": [None],
+            }
+        }
+    )
+
+    assert result.value is None
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.INVALID_RESPONSE
 
 
 def test_open_meteo_provider_returns_none_for_invalid_json() -> None:
@@ -172,6 +198,46 @@ def test_open_meteo_provider_returns_none_for_transport_failure() -> None:
 
     assert result.value is None
     assert result.diagnostics[0].kind is ProviderDiagnosticKind.PROVIDER_UNAVAILABLE
+
+
+def test_open_meteo_provider_returns_fallback_for_interrupted_response() -> None:
+    def failing_urlopen(*args, **kwargs):
+        raise IncompleteRead(b'{"hourly":')
+
+    provider = OpenMeteoHistoricalWeatherProvider(urlopen_fn=failing_urlopen)
+
+    result = provider.lookup(
+        start_time=datetime(2026, 3, 24, 11, 20, tzinfo=UTC),
+        end_time=None,
+        latitude_deg=48.877191,
+        longitude_deg=2.293044,
+    )
+
+    assert result.value is None
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.PROVIDER_UNAVAILABLE
+
+
+def test_open_meteo_provider_classifies_http_429_as_quota_exceeded() -> None:
+    def failing_urlopen(*args, **kwargs):
+        raise HTTPError(
+            "https://weather.invalid",
+            429,
+            "Too Many Requests",
+            hdrs=None,
+            fp=None,
+        )
+
+    provider = OpenMeteoHistoricalWeatherProvider(urlopen_fn=failing_urlopen)
+
+    result = provider.lookup(
+        start_time=datetime(2026, 3, 24, 11, 20, tzinfo=UTC),
+        end_time=None,
+        latitude_deg=48.877191,
+        longitude_deg=2.293044,
+    )
+
+    assert result.value is None
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.QUOTA_EXCEEDED
 
 
 def test_open_meteo_provider_reports_valid_empty_data_as_no_coverage() -> None:

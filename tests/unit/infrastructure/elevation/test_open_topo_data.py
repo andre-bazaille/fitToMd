@@ -1,5 +1,7 @@
 import io
 import json
+from http.client import IncompleteRead
+from urllib.error import HTTPError
 from urllib.request import Request
 
 import pytest
@@ -45,11 +47,15 @@ def _coordinates(count: int) -> tuple[ElevationCoordinate, ...]:
     )
 
 
-def _lookup_elevations(payload: object, count: int = 1) -> tuple[float | None, ...]:
+def _lookup_elevation_result(payload: object, count: int = 1):
     provider = OpenTopoDataElevationProvider(
         urlopen_fn=lambda *args, **kwargs: FakeResponse(payload)
     )
-    return provider.lookup(_coordinates(count)).value
+    return provider.lookup(_coordinates(count))
+
+
+def _lookup_elevations(payload: object, count: int = 1) -> tuple[float | None, ...]:
+    return _lookup_elevation_result(payload, count).value
 
 
 def test_open_topo_data_provider_posts_coordinates_and_parses_elevations() -> None:
@@ -132,7 +138,7 @@ def test_open_topo_data_provider_returns_none_for_malformed_nested_values(
 
 
 def test_open_topo_data_provider_keeps_valid_values_from_partial_results() -> None:
-    elevations = _lookup_elevations(
+    result = _lookup_elevation_result(
         {
             "status": "OK",
             "results": [
@@ -149,7 +155,20 @@ def test_open_topo_data_provider_keeps_valid_values_from_partial_results() -> No
         count=8,
     )
 
-    assert elevations == (123.0, None, None, None, None, None, None, None)
+    assert result.value == (123.0, None, None, None, None, None, None, None)
+    assert {diagnostic.kind for diagnostic in result.diagnostics} == {
+        ProviderDiagnosticKind.INVALID_RESPONSE,
+        ProviderDiagnosticKind.PARTIAL_COVERAGE,
+    }
+
+
+def test_open_topo_data_provider_classifies_malformed_result_as_invalid_response() -> (
+    None
+):
+    result = _lookup_elevation_result({"status": "OK", "results": ["broken"]})
+
+    assert result.value == (None,)
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.INVALID_RESPONSE
 
 
 @pytest.mark.parametrize(
@@ -184,6 +203,53 @@ def test_open_topo_data_provider_returns_none_for_transport_failure() -> None:
     result = provider.lookup(_coordinates(2))
     assert result.value == (None, None)
     assert result.diagnostics[0].kind is ProviderDiagnosticKind.PROVIDER_UNAVAILABLE
+
+
+def test_open_topo_data_provider_continues_after_interrupted_batch() -> None:
+    responses = iter(
+        (
+            IncompleteRead(b'{"status":"OK"'),
+            FakeResponse({"status": "OK", "results": [{"elevation": 456}]}),
+        )
+    )
+
+    def fake_urlopen(*args, **kwargs):
+        response = next(responses)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+    provider = OpenTopoDataElevationProvider(
+        base_url="https://elevation.internal",
+        max_batch_size=1,
+        urlopen_fn=fake_urlopen,
+    )
+
+    result = provider.lookup(_coordinates(2))
+
+    assert result.value == (None, 456.0)
+    assert {diagnostic.kind for diagnostic in result.diagnostics} == {
+        ProviderDiagnosticKind.PROVIDER_UNAVAILABLE,
+        ProviderDiagnosticKind.PARTIAL_COVERAGE,
+    }
+
+
+def test_open_topo_data_provider_classifies_http_429_as_quota_exceeded() -> None:
+    def failing_urlopen(*args, **kwargs):
+        raise HTTPError(
+            "https://elevation.invalid",
+            429,
+            "Too Many Requests",
+            hdrs=None,
+            fp=None,
+        )
+
+    provider = OpenTopoDataElevationProvider(urlopen_fn=failing_urlopen)
+
+    result = provider.lookup(_coordinates(1))
+
+    assert result.value == (None,)
+    assert result.diagnostics[0].kind is ProviderDiagnosticKind.QUOTA_EXCEEDED
 
 
 def test_open_topo_data_provider_reports_valid_null_data_as_no_coverage() -> None:

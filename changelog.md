@@ -1,5 +1,9 @@
 ## 2026-09-17
 
+- Preserved report generation across interrupted weather and elevation HTTP
+  responses, classified HTTP 429 responses as quota exhaustion, and distinguished
+  malformed nested provider data from legitimate missing coverage while retaining
+  valid partial values.
 - Moved directory output planning and execution into an application batch use
   case with typed per-file outcomes and a Markdown writer port; existing and
   colliding activity-time outputs now avoid enrichment and rendering, while

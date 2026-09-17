@@ -1,10 +1,14 @@
+import io
+import json
 from datetime import datetime
+from http.client import IncompleteRead
 from pathlib import Path
 
 import pytest
 
 from fit_to_md.application.use_cases.generate_markdown_report import (
     GeneratedMarkdownReport,
+    GenerateMarkdownReport,
     ReportGenerationMetadata,
 )
 from fit_to_md.application.use_cases.generate_markdown_report_batch import (
@@ -12,8 +16,13 @@ from fit_to_md.application.use_cases.generate_markdown_report_batch import (
     BatchReportStatus,
     GenerateMarkdownReportBatch,
 )
+from fit_to_md.domain.activity import Activity, ActivitySession
 from fit_to_md.domain.activity.ports import InvalidActivityError
 from fit_to_md.domain.reporting.entities import FitReport, SessionSummary
+from fit_to_md.domain.reporting.ports import ProviderDiagnosticKind
+from fit_to_md.infrastructure.weather.open_meteo import (
+    OpenMeteoHistoricalWeatherProvider,
+)
 
 
 def _generated(markdown: str, start_time: datetime | None = None):
@@ -77,6 +86,18 @@ class StubWriter:
         if path in self.write_errors:
             raise self.write_errors[path]
         self.contents[path] = markdown
+
+
+class FakeResponse:
+    def __init__(self, payload: object) -> None:
+        self._buffer = io.StringIO(json.dumps(payload))
+
+    def __enter__(self) -> io.StringIO:
+        return self._buffer
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._buffer.close()
+        return None
 
 
 @pytest.mark.parametrize("legacy", (False, True))
@@ -168,6 +189,80 @@ def test_source_name_batch_continues_after_processing_and_write_failures(
         BatchReportStatus.SUCCESS,
     ]
     assert writer.contents[successful.with_suffix(".md")] == "# successful"
+
+
+def test_source_name_batch_continues_after_interrupted_weather_response(
+    tmp_path: Path,
+) -> None:
+    sources = (tmp_path / "a.fit", tmp_path / "b.fit")
+    activity = Activity(
+        session=ActivitySession(
+            start_time=datetime(2026, 9, 17, 8, 0),
+            start_latitude_deg=48.85,
+            start_longitude_deg=2.35,
+        ),
+        sport="running",
+    )
+
+    class Reader:
+        def read(self, source: Path) -> Activity:
+            return activity
+
+    class Renderer:
+        def render(self, report: FitReport) -> str:
+            return "# report"
+
+    responses = iter(
+        (
+            IncompleteRead(b'{"hourly":'),
+            FakeResponse(
+                {
+                    "hourly": {
+                        "time": ["2026-09-17T08:00"],
+                        "temperature_2m": [14.0],
+                        "apparent_temperature": [13.0],
+                        "weather_code": [1],
+                        "wind_speed_10m": [8.0],
+                        "wind_direction_10m": [180],
+                    }
+                }
+            ),
+        )
+    )
+
+    def fake_urlopen(*args, **kwargs):
+        response = next(responses)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+    generator = GenerateMarkdownReport(
+        reader=Reader(),
+        renderer=Renderer(),
+        weather_provider=OpenMeteoHistoricalWeatherProvider(urlopen_fn=fake_urlopen),
+    )
+    writer = StubWriter([])
+
+    outcomes = list(
+        GenerateMarkdownReportBatch(generator, writer).execute(
+            sources, BatchOutputNaming.SOURCE_NAME
+        )
+    )
+
+    assert [outcome.status for outcome in outcomes] == [
+        BatchReportStatus.SUCCESS,
+        BatchReportStatus.SUCCESS,
+    ]
+    assert outcomes[0].generated is not None
+    assert outcomes[0].generated.diagnostics[0].kind is (
+        ProviderDiagnosticKind.PROVIDER_UNAVAILABLE
+    )
+    assert outcomes[1].generated is not None
+    assert outcomes[1].generated.report.summary.weather is not None
+    assert set(writer.contents) == {
+        sources[0].with_suffix(".md"),
+        sources[1].with_suffix(".md"),
+    }
 
 
 def test_successes_are_written_and_yielded_incrementally(tmp_path: Path) -> None:
