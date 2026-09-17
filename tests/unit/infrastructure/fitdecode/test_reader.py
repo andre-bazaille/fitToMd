@@ -6,14 +6,44 @@ from typing import Self
 import fitdecode
 import pytest
 
+from fit_to_md.application.use_cases.generate_markdown_report import (
+    GenerateMarkdownReport,
+)
 from fit_to_md.domain.activity.entities import ActivityRecord
+from fit_to_md.domain.reporting.elevation import ElevationEnricher
 from fit_to_md.domain.reporting.entities import WeatherSummary
 from fit_to_md.domain.reporting.ports import ElevationCoordinate
 from fit_to_md.domain.reporting.services import SessionSummaryBuilder, TransitionBuilder
-from fit_to_md.infrastructure.fitdecode.extractor import (
-    FitdecodeActivityExtractor,
-    _replace_record_altitudes_from_dem,
-)
+from fit_to_md.infrastructure.fitdecode.reader import FitdecodeActivityReader
+from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
+
+
+class _TestReportGenerator(GenerateMarkdownReport):
+    def build_report(self, source: Path):
+        return self.execute_with_report(source)[0]
+
+    def _parse_activity(self, source: Path):
+        return self._reader.read(source)
+
+
+def _generator(reader_factory=None, **kwargs):
+    return _TestReportGenerator(
+        reader=FitdecodeActivityReader(reader_factory=reader_factory),
+        renderer=MarkdownReportRenderer(),
+        **kwargs,
+    )
+
+
+def _replace_record_altitudes_from_dem(
+    records,
+    elevation_provider,
+    elevation_mode,
+    sample_distance_m,
+):
+    enricher = ElevationEnricher(sample_distance_m)
+    coordinates = enricher.sample_coordinates(records)
+    elevations = elevation_provider.lookup(coordinates)
+    return enricher.enrich_records(records, elevations, elevation_mode)
 
 
 class FakeField:
@@ -48,20 +78,20 @@ class FakeReader:
 
 
 @pytest.mark.parametrize("invalid_value", (float("nan"), float("inf"), float("-inf")))
-def test_extractor_rejects_non_finite_elevation_sample_distance(
+def test_generator_rejects_non_finite_elevation_sample_distance(
     invalid_value: float,
 ) -> None:
     with pytest.raises(ValueError, match="finite"):
-        FitdecodeActivityExtractor(elevation_sample_distance_m=invalid_value)
+        _generator(elevation_sample_distance_m=invalid_value)
 
 
-def test_extractor_accepts_finite_elevation_sample_distance() -> None:
-    extractor = FitdecodeActivityExtractor(elevation_sample_distance_m=1.0)
+def test_generator_accepts_finite_elevation_sample_distance() -> None:
+    generator = _generator(elevation_sample_distance_m=1.0)
 
-    assert extractor._elevation_sample_distance_m == 1.0
+    assert generator._elevation_sample_distance_m == 1.0
 
 
-def test_extractor_builds_summary_splits_and_transitions() -> None:
+def test_generator_builds_summary_splits_and_transitions() -> None:
     start = datetime(2026, 3, 29, 6, 0, 0)
     frames = [
         FakeFrame("sport", {"sport": "running", "sub_sport": "trail_running"}),
@@ -133,9 +163,9 @@ def test_extractor_builds_summary_splits_and_transitions() -> None:
     ]
     frames.extend(_record_frames(start))
 
-    extractor = FitdecodeActivityExtractor(reader_factory=lambda _: FakeReader(frames))
+    generator = _generator(reader_factory=lambda _: FakeReader(frames))
 
-    report = extractor.extract(Path("activity.fit"))
+    report = generator.build_report(Path("activity.fit"))
 
     assert report.summary.activity_type == "Trail Running"
     assert report.summary.total_distance_km == pytest.approx(2.1)
@@ -157,7 +187,7 @@ def test_extractor_builds_summary_splits_and_transitions() -> None:
     assert report.transitions[0].samples[10].speed_kmh == pytest.approx(12.0, abs=0.1)
 
 
-def test_extractor_rejects_multiple_sessions_instead_of_combining_them() -> None:
+def test_generator_rejects_multiple_sessions_instead_of_combining_them() -> None:
     start = datetime(2026, 3, 29, 6, 0, 0)
     frames = [
         FakeFrame("sport", {"sport": "cycling"}),
@@ -242,16 +272,16 @@ def test_extractor_rejects_multiple_sessions_instead_of_combining_them() -> None
             },
         ),
     ]
-    extractor = FitdecodeActivityExtractor(reader_factory=lambda _: FakeReader(frames))
+    generator = _generator(reader_factory=lambda _: FakeReader(frames))
 
     with pytest.raises(
         NotImplementedError,
         match="FIT files with multiple sessions are not supported",
     ):
-        extractor.extract(Path("multisport.fit"))
+        generator.build_report(Path("multisport.fit"))
 
 
-def test_extractor_builds_kilometer_transitions_without_laps() -> None:
+def test_generator_builds_kilometer_transitions_without_laps() -> None:
     start = datetime(2026, 3, 29, 6, 0, 0)
     frames = [
         FakeFrame(
@@ -266,9 +296,9 @@ def test_extractor_builds_kilometer_transitions_without_laps() -> None:
     ]
     frames.extend(_record_frames(start))
 
-    extractor = FitdecodeActivityExtractor(reader_factory=lambda _: FakeReader(frames))
+    generator = _generator(reader_factory=lambda _: FakeReader(frames))
 
-    report = extractor.extract(Path("activity.fit"))
+    report = generator.build_report(Path("activity.fit"))
 
     assert len(report.transitions) == 2
     assert report.transitions[0].label == "Km 1"
@@ -277,7 +307,7 @@ def test_extractor_builds_kilometer_transitions_without_laps() -> None:
     assert report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(300.0)
 
 
-def test_extractor_excludes_paused_time_from_record_splits_and_transitions() -> None:
+def test_generator_excludes_paused_time_from_record_splits_and_transitions() -> None:
     start = datetime(2026, 4, 10, 6, 0, 0)
     frames = [
         FakeFrame(
@@ -384,12 +414,12 @@ def test_extractor_excludes_paused_time_from_record_splits_and_transitions() -> 
         ),
     ]
 
-    extractor = FitdecodeActivityExtractor(
+    generator = _generator(
         reader_factory=lambda _: FakeReader(frames),
         transition_builder=TransitionBuilder(sample_interval_s=60),
     )
 
-    report = extractor.extract(Path("activity.fit"))
+    report = generator.build_report(Path("activity.fit"))
 
     assert report.summary.total_timer_time_s == pytest.approx(450.0)
     assert report.summary.total_elapsed_time_s == pytest.approx(570.0)
@@ -404,7 +434,7 @@ def test_extractor_excludes_paused_time_from_record_splits_and_transitions() -> 
     ]
 
 
-def test_extractor_falls_back_to_lap_splits_when_record_distances_missing() -> None:
+def test_generator_falls_back_to_lap_splits_when_record_distances_missing() -> None:
     start = datetime(2026, 3, 29, 7, 0, 0)
     frames = [
         FakeFrame(
@@ -451,9 +481,9 @@ def test_extractor_falls_back_to_lap_splits_when_record_distances_missing() -> N
         ),
     ]
 
-    extractor = FitdecodeActivityExtractor(reader_factory=lambda _: FakeReader(frames))
+    generator = _generator(reader_factory=lambda _: FakeReader(frames))
 
-    report = extractor.extract(Path("activity.fit"))
+    report = generator.build_report(Path("activity.fit"))
 
     assert len(report.splits) == 2
     assert report.splits[0].pace_seconds_per_km == pytest.approx(330.0)
@@ -461,7 +491,7 @@ def test_extractor_falls_back_to_lap_splits_when_record_distances_missing() -> N
     assert report.transitions == ()
 
 
-def test_extractor_normalizes_running_record_cadence_with_fractional_component() -> (
+def test_generator_normalizes_running_record_cadence_with_fractional_component() -> (
     None
 ):
     start = datetime(2026, 3, 29, 8, 0, 0)
@@ -501,15 +531,15 @@ def test_extractor_normalizes_running_record_cadence_with_fractional_component()
         ),
     ]
 
-    extractor = FitdecodeActivityExtractor(reader_factory=lambda _: FakeReader(frames))
+    generator = _generator(reader_factory=lambda _: FakeReader(frames))
 
-    report = extractor.extract(Path("activity.fit"))
+    report = generator.build_report(Path("activity.fit"))
 
     assert report.summary.avg_cadence_spm == 161
     assert report.splits[0].avg_cadence_spm == 161
 
 
-def test_extractor_derives_weather_summary_from_record_temperatures_when_session_missing() -> (
+def test_generator_derives_weather_summary_from_record_temperatures_when_session_missing() -> (
     None
 ):
     start = datetime(2026, 3, 29, 8, 30, 0)
@@ -549,16 +579,16 @@ def test_extractor_derives_weather_summary_from_record_temperatures_when_session
         ),
     ]
 
-    extractor = FitdecodeActivityExtractor(reader_factory=lambda _: FakeReader(frames))
+    generator = _generator(reader_factory=lambda _: FakeReader(frames))
 
-    report = extractor.extract(Path("activity.fit"))
+    report = generator.build_report(Path("activity.fit"))
 
     assert report.summary.avg_temperature_c == pytest.approx(12.0)
     assert report.summary.min_temperature_c == pytest.approx(10.0)
     assert report.summary.max_temperature_c == pytest.approx(14.0)
 
 
-def test_extractor_uses_record_start_for_summary_and_weather_lookup() -> None:
+def test_generator_uses_record_start_for_summary_and_weather_lookup() -> None:
     start = datetime(2026, 9, 16, 12, 0, 0)
     end = start + timedelta(seconds=100)
     frames = [
@@ -590,10 +620,10 @@ def test_extractor_uses_record_start_for_summary_and_weather_lookup() -> None:
             return None
 
     weather_provider = RecordingWeatherProvider()
-    report = FitdecodeActivityExtractor(
+    report = _generator(
         reader_factory=lambda _: FakeReader(frames),
         weather_provider=weather_provider,
-    ).extract(Path("activity.fit"))
+    ).build_report(Path("activity.fit"))
 
     assert report.summary.start_time == start
     assert len(weather_provider.calls) == 1
@@ -602,7 +632,7 @@ def test_extractor_uses_record_start_for_summary_and_weather_lookup() -> None:
     assert weather_end == end
 
 
-def test_extractor_enriches_missing_weather_from_provider() -> None:
+def test_generator_enriches_missing_weather_from_provider() -> None:
     start = datetime(2026, 3, 29, 10, 0, 0)
     frames = [
         FakeFrame(
@@ -656,12 +686,12 @@ def test_extractor_enriches_missing_weather_from_provider() -> None:
             )
 
     weather_provider = StubWeatherProvider()
-    extractor = FitdecodeActivityExtractor(
+    generator = _generator(
         reader_factory=lambda _: FakeReader(frames),
         weather_provider=weather_provider,
     )
 
-    report = extractor.extract(Path("activity.fit"))
+    report = generator.build_report(Path("activity.fit"))
 
     assert weather_provider.calls
     assert report.summary.weather is not None
@@ -670,7 +700,7 @@ def test_extractor_enriches_missing_weather_from_provider() -> None:
 
 
 @pytest.mark.parametrize("temperature_source", ["session", "record", "lap"])
-def test_extractor_does_not_replace_fit_temperature_with_historical_weather(
+def test_generator_does_not_replace_fit_temperature_with_historical_weather(
     temperature_source: str,
 ) -> None:
     start = datetime(2026, 3, 29, 10, 0, 0)
@@ -729,17 +759,17 @@ def test_extractor_does_not_replace_fit_temperature_with_historical_weather(
             )
 
     weather_provider = UnexpectedWeatherProvider()
-    report = FitdecodeActivityExtractor(
+    report = _generator(
         reader_factory=lambda _: FakeReader(frames),
         weather_provider=weather_provider,
-    ).extract(Path("activity.fit"))
+    ).build_report(Path("activity.fit"))
 
     assert weather_provider.calls == 0
     assert report.summary.weather is None
     assert report.summary.avg_temperature_c == pytest.approx(20.0)
 
 
-def test_extractor_derives_noise_resistant_elevation_gain_loss_from_records() -> None:
+def test_generator_derives_noise_resistant_elevation_gain_loss_from_records() -> None:
     start = datetime(2026, 3, 29, 8, 45, 0)
     frames = [
         FakeFrame(
@@ -768,9 +798,9 @@ def test_extractor_derives_noise_resistant_elevation_gain_loss_from_records() ->
             )
         )
 
-    extractor = FitdecodeActivityExtractor(reader_factory=lambda _: FakeReader(frames))
+    generator = _generator(reader_factory=lambda _: FakeReader(frames))
 
-    report = extractor.extract(Path("activity.fit"))
+    report = generator.build_report(Path("activity.fit"))
 
     assert report.summary.total_ascent_m == pytest.approx(10.0, abs=1.0)
     assert report.summary.total_descent_m == pytest.approx(0.0, abs=0.5)
@@ -778,7 +808,7 @@ def test_extractor_derives_noise_resistant_elevation_gain_loss_from_records() ->
     assert report.summary.total_descent_m < 17.0
 
 
-def test_extractor_respects_custom_elevation_filter_settings() -> None:
+def test_generator_respects_custom_elevation_filter_settings() -> None:
     start = datetime(2026, 3, 29, 8, 50, 0)
     frames = [
         FakeFrame(
@@ -816,16 +846,16 @@ def test_extractor_respects_custom_elevation_filter_settings() -> None:
             )
         )
 
-    default_report = FitdecodeActivityExtractor(
+    default_report = _generator(
         reader_factory=lambda _: FakeReader(frames)
-    ).extract(Path("activity.fit"))
-    tuned_report = FitdecodeActivityExtractor(
+    ).build_report(Path("activity.fit"))
+    tuned_report = _generator(
         reader_factory=lambda _: FakeReader(frames),
         summary_builder=SessionSummaryBuilder(
             elevation_smoothing_distance_m=250.0,
             min_elevation_change_m=0.8,
         ),
-    ).extract(Path("activity.fit"))
+    ).build_report(Path("activity.fit"))
 
     assert tuned_report.summary.total_ascent_m < default_report.summary.total_ascent_m
     assert (
@@ -833,7 +863,7 @@ def test_extractor_respects_custom_elevation_filter_settings() -> None:
     )
 
 
-def test_extractor_omits_grade_when_stopped_distance_change_is_noise() -> None:
+def test_generator_omits_grade_when_stopped_distance_change_is_noise() -> None:
     start = datetime(2026, 3, 29, 9, 0, 0)
     frames = [
         FakeFrame("sport", {"sport": "running"}),
@@ -917,18 +947,18 @@ def test_extractor_omits_grade_when_stopped_distance_change_is_noise() -> None:
         ),
     ]
 
-    extractor = FitdecodeActivityExtractor(
+    generator = _generator(
         reader_factory=lambda _: FakeReader(frames),
         transition_builder=TransitionBuilder(sample_interval_s=60),
     )
 
-    report = extractor.extract(Path("activity.fit"))
+    report = generator.build_report(Path("activity.fit"))
 
     assert report.transitions[0].samples[-1].speed_kmh == pytest.approx(0.0)
     assert report.transitions[0].samples[-1].grade_percent is None
 
 
-def test_extractor_estimates_grade_from_smoothed_altitude_when_fit_grade_missing() -> (
+def test_generator_estimates_grade_from_smoothed_altitude_when_fit_grade_missing() -> (
     None
 ):
     start = datetime(2026, 3, 29, 9, 30, 0)
@@ -977,10 +1007,10 @@ def test_extractor_estimates_grade_from_smoothed_altitude_when_fit_grade_missing
         for index, offset_seconds in enumerate(range(0, 121, 12))
     )
 
-    report = FitdecodeActivityExtractor(
+    report = _generator(
         reader_factory=lambda _: FakeReader(frames),
         transition_builder=TransitionBuilder(sample_interval_s=120),
-    ).extract(Path("activity.fit"))
+    ).build_report(Path("activity.fit"))
 
     assert len(report.transitions[0].samples) == 2
     assert report.transitions[0].samples[-1].grade_percent == pytest.approx(
@@ -988,7 +1018,7 @@ def test_extractor_estimates_grade_from_smoothed_altitude_when_fit_grade_missing
     )
 
 
-def test_extractor_replaces_fit_altitude_with_dem_samples() -> None:
+def test_generator_replaces_fit_altitude_with_dem_samples() -> None:
     start = datetime(2026, 3, 29, 10, 0, 0)
     frames = [
         FakeFrame(
@@ -1058,7 +1088,7 @@ def test_extractor_replaces_fit_altitude_with_dem_samples() -> None:
             return (100.0, 102.5, 105.0, 107.5, 110.0)
 
     elevation_provider = StubElevationProvider()
-    extractor = FitdecodeActivityExtractor(
+    generator = _generator(
         reader_factory=lambda _: FakeReader(frames),
         elevation_provider=elevation_provider,
         elevation_mode="dem",
@@ -1066,7 +1096,7 @@ def test_extractor_replaces_fit_altitude_with_dem_samples() -> None:
         transition_builder=TransitionBuilder(sample_interval_s=100),
     )
 
-    report = extractor.extract(Path("activity.fit"))
+    report = generator.build_report(Path("activity.fit"))
 
     assert elevation_provider.calls
     assert len(elevation_provider.calls[0]) == 5
@@ -1078,7 +1108,7 @@ def test_extractor_replaces_fit_altitude_with_dem_samples() -> None:
     )
 
 
-def test_extractor_hybrid_keeps_stable_fit_altitude() -> None:
+def test_generator_hybrid_keeps_stable_fit_altitude() -> None:
     start = datetime(2026, 3, 29, 10, 15, 0)
     frames = [
         FakeFrame(
@@ -1117,20 +1147,20 @@ def test_extractor_hybrid_keeps_stable_fit_altitude() -> None:
         ) -> tuple[float | None, ...]:
             return (200.0, 205.0, 210.0, 215.0, 220.0)
 
-    report = FitdecodeActivityExtractor(
+    report = _generator(
         reader_factory=lambda _: FakeReader(frames),
         elevation_provider=StubElevationProvider(),
         elevation_mode="hybrid",
         elevation_sample_distance_m=250.0,
         transition_builder=TransitionBuilder(sample_interval_s=100),
-    ).extract(Path("activity.fit"))
+    ).build_report(Path("activity.fit"))
 
     assert report.summary.total_ascent_m == pytest.approx(10.0, abs=1.0)
     assert report.summary.total_descent_m == pytest.approx(0.0, abs=0.5)
     assert report.transitions[0].samples[-1].grade_percent == pytest.approx(7.0)
 
 
-def test_extractor_hybrid_replaces_noisy_fit_altitude() -> None:
+def test_generator_hybrid_replaces_noisy_fit_altitude() -> None:
     start = datetime(2026, 3, 29, 10, 30, 0)
     frames = [
         FakeFrame(
@@ -1182,13 +1212,13 @@ def test_extractor_hybrid_replaces_noisy_fit_altitude() -> None:
         ) -> tuple[float | None, ...]:
             return (100.0, 102.5, 105.0, 107.5, 110.0)
 
-    report = FitdecodeActivityExtractor(
+    report = _generator(
         reader_factory=lambda _: FakeReader(frames),
         elevation_provider=StubElevationProvider(),
         elevation_mode="hybrid",
         elevation_sample_distance_m=250.0,
         transition_builder=TransitionBuilder(sample_interval_s=100),
-    ).extract(Path("activity.fit"))
+    ).build_report(Path("activity.fit"))
 
     assert report.summary.total_ascent_m == pytest.approx(10.0, abs=1.0)
     assert report.summary.total_descent_m == pytest.approx(0.0, abs=0.5)
@@ -1423,12 +1453,12 @@ def test_dem_gap_keeps_summary_and_split_elevation_consistent() -> None:
             )
         )
 
-    report = FitdecodeActivityExtractor(
+    report = _generator(
         reader_factory=lambda _: FakeReader(frames),
         elevation_provider=StubElevationProvider((10.0, None, 30.0)),
         elevation_mode="dem",
         elevation_sample_distance_m=1000.0,
-    ).extract(Path("activity.fit"))
+    ).build_report(Path("activity.fit"))
 
     assert report.summary.total_ascent_m == pytest.approx(18.33, abs=0.01)
     assert report.summary.total_descent_m == pytest.approx(8.33, abs=0.01)
@@ -1551,10 +1581,10 @@ def test_aligned_lap_timing_excludes_pause_and_places_finish_sample(
                 (700, "stop"),
             )
         )
-    extractor = FitdecodeActivityExtractor(reader_factory=lambda _: FakeReader(frames))
-    activity = extractor._parse_activity(Path("pause.fit"))
+    generator = _generator(reader_factory=lambda _: FakeReader(frames))
+    activity = generator._parse_activity(Path("pause.fit"))
     assert activity.has_active_record_timing is with_timer_events
-    report = extractor.extract(Path("pause.fit"))
+    report = generator.build_report(Path("pause.fit"))
     assert [split.time_seconds for split in report.splits] == [300, 300]
     assert [split.pace_seconds_per_km for split in report.splits] == [300, 300]
     assert report.summary.total_timer_time_s == 600

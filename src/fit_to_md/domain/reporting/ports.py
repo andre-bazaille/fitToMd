@@ -1,7 +1,6 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Protocol
 
 from fit_to_md.domain.reporting.entities import FitReport, WeatherSummary
@@ -26,10 +25,6 @@ class ElevationDiagnostics(Protocol):
     ) -> None: ...
 
     def run_statistics(self) -> ElevationRunStatistics: ...
-
-
-class ActivityExtractor(Protocol):
-    def extract(self, source: Path) -> FitReport: ...
 
 
 class ReportRenderer(Protocol):

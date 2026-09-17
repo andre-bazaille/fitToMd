@@ -7,7 +7,8 @@ import pytest
 from fitdecode.utils import compute_crc
 
 from fit_to_md.domain.privacy import FitSanitizationPolicy
-from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
+from fit_to_md.domain.reporting.services import SessionSummaryBuilder
+from fit_to_md.infrastructure.fitdecode.reader import FitdecodeActivityReader
 from fit_to_md.infrastructure.fitdecode.sanitizer import FitdecodeFixtureSanitizer
 
 FIT_EPOCH = datetime(1989, 12, 31, tzinfo=UTC)
@@ -340,8 +341,10 @@ def test_sanitizer_removes_private_metadata_and_preserves_activity(
             timestamp + expected_delta for timestamp in original_values
         ]
 
-    original = FitdecodeActivityExtractor().extract(source).summary
-    sanitized = FitdecodeActivityExtractor().extract(destination).summary
+    reader = FitdecodeActivityReader()
+    summary_builder = SessionSummaryBuilder()
+    original = summary_builder.build(reader.read(source))
+    sanitized = summary_builder.build(reader.read(destination))
     assert sanitized.start_time == target
     assert sanitized.total_distance_km == original.total_distance_km
     assert sanitized.total_timer_time_s == original.total_timer_time_s

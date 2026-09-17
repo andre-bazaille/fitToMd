@@ -726,17 +726,16 @@ def test_parser_rejects_removed_transition_window_option() -> None:
 def test_default_configuration_does_not_enable_external_providers() -> None:
     args = build_parser().parse_args(["activity.fit"])
     generator = build_default_generator()
-    extractor = generator._extractor
 
     assert args.weather_mode == "fit"
     assert args.elevation_source == "fit"
     assert args.dynamics_step_size == 30
     assert args.dem_sample_distance == 25.0
-    assert extractor._weather_provider is None
-    assert extractor._elevation_provider is None
-    assert extractor._elevation_mode == "fit"
-    assert extractor._transition_builder._sample_interval_s == 30
-    assert extractor._elevation_sample_distance_m == 25.0
+    assert generator._weather_provider is None
+    assert generator._elevation_provider is None
+    assert generator._elevation_mode == "fit"
+    assert generator._transition_builder._sample_interval_s == 30
+    assert generator._elevation_sample_distance_m == 25.0
 
 
 def test_run_passes_transition_options_to_default_generator(
@@ -932,19 +931,18 @@ def test_build_default_generator_configures_transition_builder() -> None:
         opentopodata_base_url="https://elevation.internal",
     )
 
-    extractor = generator._extractor
-    summary_builder = extractor._summary_builder
-    transition_builder = extractor._transition_builder
+    summary_builder = generator._summary_builder
+    transition_builder = generator._transition_builder
 
     assert summary_builder._elevation_smoothing_distance_m == 220.0
     assert summary_builder._min_elevation_change_m == 0.8
     assert transition_builder._sample_interval_s == 5
-    assert isinstance(extractor._weather_provider, OpenMeteoHistoricalWeatherProvider)
-    assert extractor._elevation_provider is not None
-    assert extractor._elevation_mode == "hybrid"
-    assert extractor._elevation_sample_distance_m == 25.0
-    assert extractor._elevation_provider._dataset == "copernicus"
-    assert extractor._elevation_provider._base_url == "https://elevation.internal"
+    assert isinstance(generator._weather_provider, OpenMeteoHistoricalWeatherProvider)
+    assert generator._elevation_provider is not None
+    assert generator._elevation_mode == "hybrid"
+    assert generator._elevation_sample_distance_m == 25.0
+    assert generator._elevation_provider._dataset == "copernicus"
+    assert generator._elevation_provider._base_url == "https://elevation.internal"
 
 
 def test_default_runtime_retains_explicit_elevation_diagnostics_handle() -> None:

@@ -1,5 +1,5 @@
 import io
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -11,7 +11,7 @@ from fit_to_md.cli import run
 from fit_to_md.domain.activity import Activity
 from fit_to_md.domain.reporting.entities import FitReport, SessionSummary
 from fit_to_md.domain.reporting.services import SessionSummaryBuilder, TransitionBuilder
-from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
+from fit_to_md.infrastructure.fitdecode.reader import FitdecodeActivityReader
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fit_files"
@@ -88,12 +88,12 @@ class _CapturingSessionSummaryBuilder(SessionSummaryBuilder):
         return super().build(activity)
 
 
-class _CachedReportExtractor:
-    def __init__(self, reports: dict[str, FitReport]) -> None:
-        self._reports = reports
+class _CachedActivityReader:
+    def __init__(self, activities: dict[str, Activity]) -> None:
+        self._activities = activities
 
-    def extract(self, source: Path) -> FitReport:
-        return self._reports[source.name]
+    def read(self, source: Path) -> Activity:
+        return self._activities[source.name]
 
 
 @pytest.fixture(scope="module")
@@ -101,9 +101,11 @@ def decoded_fit_files() -> dict[str, _DecodedFitFixture]:
     decoded_files: dict[str, _DecodedFitFixture] = {}
     for file_name in sorted(FIT_EXPECTATIONS):
         summary_builder = _CapturingSessionSummaryBuilder()
-        report = FitdecodeActivityExtractor(summary_builder=summary_builder).extract(
-            FIXTURE_DIR / file_name
-        )
+        report, _ = GenerateMarkdownReport(
+            reader=FitdecodeActivityReader(),
+            renderer=MarkdownReportRenderer(),
+            summary_builder=summary_builder,
+        ).execute_with_report(FIXTURE_DIR / file_name)
         activity = summary_builder.activity
         assert activity is not None
         decoded_files[file_name] = _DecodedFitFixture(
@@ -117,7 +119,7 @@ def decoded_fit_files() -> dict[str, _DecodedFitFixture]:
     ("file_name", "expected"),
     sorted(FIT_EXPECTATIONS.items()),
 )
-def test_extractor_decodes_real_fit_files(
+def test_reader_and_application_decode_real_fit_files(
     file_name: str,
     expected: dict[str, float | int],
     decoded_fit_files: dict[str, _DecodedFitFixture],
@@ -156,7 +158,7 @@ def test_extractor_decodes_real_fit_files(
     )
 
 
-def test_extractor_excludes_paused_time_from_real_fit_split_and_transition_durations(
+def test_workflow_excludes_paused_time_from_real_fit_split_and_transition_durations(
     decoded_fit_files: dict[str, _DecodedFitFixture],
 ) -> None:
     report = decoded_fit_files["0004.fit"].report
@@ -198,11 +200,6 @@ def test_cli_uses_real_fit_file_without_external_network_by_default(
     stderr = io.StringIO()
     output_file = tmp_path / "0001.md"
     decoded_file = decoded_fit_files[fit_file.name]
-    dense_report = replace(
-        decoded_file.report,
-        transitions=TransitionBuilder(sample_interval_s=5).build(decoded_file.activity),
-    )
-
     exit_code = run(
         argv=[
             str(fit_file),
@@ -210,8 +207,9 @@ def test_cli_uses_real_fit_file_without_external_network_by_default(
             "5",
         ],
         report_generator=GenerateMarkdownReport(
-            extractor=_CachedReportExtractor({fit_file.name: dense_report}),
+            reader=_CachedActivityReader({fit_file.name: decoded_file.activity}),
             renderer=MarkdownReportRenderer(),
+            transition_builder=TransitionBuilder(sample_interval_s=5),
         ),
         stdout=stdout,
         stderr=stderr,
@@ -247,7 +245,7 @@ def test_transition_builder_configuration_affects_real_fit_output(
     )
 
 
-def test_extractor_omits_grade_for_stationary_kilometer_samples_in_real_fit_file(
+def test_workflow_omits_grade_for_stationary_kilometer_samples_in_real_fit_file(
     decoded_fit_files: dict[str, _DecodedFitFixture],
 ) -> None:
     report = decoded_fit_files["0001.fit"].report
@@ -257,7 +255,7 @@ def test_extractor_omits_grade_for_stationary_kilometer_samples_in_real_fit_file
     assert report.transitions[0].samples[0].grade_percent is None
 
 
-def test_extractor_estimates_smoothed_transition_grade_for_real_fit_file(
+def test_workflow_estimates_smoothed_transition_grade_for_real_fit_file(
     decoded_fit_files: dict[str, _DecodedFitFixture],
 ) -> None:
     report = decoded_fit_files["0001.fit"].report

@@ -1,5 +1,8 @@
 ## 2026-09-17
 
+- Replaced the report-producing FIT extractor with an `ActivityReader` boundary;
+  the application now owns optional enrichment, report assembly, and rendering,
+  while decoder-independent DEM profile rules live in the Reporting domain.
 - Replaced private generator/extractor inspection for elevation progress and
   usage reporting with an explicit typed diagnostics handle, structured run
   statistics, and CLI-owned user-facing formatting.

@@ -20,7 +20,7 @@ These entities contain no fitdecode objects, raw FIT dictionaries, or FIT field 
 `fit_to_md.domain.reporting` contains:
 
 - immutable report entities (`FitReport`, `SessionSummary`, `Split`, and dynamics samples);
-- ports for activity extraction, rendering, elevation, and historical weather;
+- ports for rendering, elevation, and historical weather;
 - a typed elevation diagnostics contract for progress callbacks and structured
   per-run request statistics;
 - domain services that compute summaries, kilometer splits, smoothed elevation, and dynamics from an `Activity`.
@@ -57,14 +57,14 @@ flowchart LR
     CLI --> APP[GenerateMarkdownReport]
     BATCH --> APP
     BATCH --> FILES[Existing-file checks, collision handling, and Markdown writes]
-    APP --> EXTRACTOR[ActivityExtractor port]
+    APP --> READER[ActivityReader port]
     APP --> RENDERER[ReportRenderer port]
-    EXTRACTOR -. implemented by .-> FIT[FitdecodeActivityExtractor]
+    APP --> SERVICES[Reporting domain services]
+    APP --> WEATHER[HistoricalWeatherProvider port]
+    APP --> ELEVATION[ElevationProvider port]
+    READER -. implemented by .-> FIT[FitdecodeActivityReader]
     RENDERER -. implemented by .-> MD[MarkdownReportRenderer]
     FIT --> ACTIVITY[Activity domain model]
-    FIT --> SERVICES[Reporting domain services]
-    FIT --> WEATHER[HistoricalWeatherProvider port]
-    FIT --> ELEVATION[ElevationProvider port]
 ```
 
 The `fit-to-md` CLI is the report composition root: it selects concrete FIT,
@@ -76,7 +76,7 @@ When elevation enrichment is enabled, the composition root also retains the
 provider through the narrower `ElevationDiagnostics` contract. The CLI uses
 that explicit handle to register progress output and format structured run
 statistics. It does not discover diagnostics by inspecting generator or
-extractor internals, and providers do not return user-facing usage text.
+reader internals, and providers do not return user-facing usage text.
 
 Directory batch processing currently belongs to `fit_to_md.cli`, not to an
 application use case. The CLI enumerates direct-child FIT files in filename
@@ -85,10 +85,13 @@ skips existing reports, detects output collisions, continues after individual
 failures, writes successful Markdown reports, and chooses the final exit status.
 The application use case still handles one source file at a time.
 
-The current `ActivityExtractor` port returns a complete `FitReport`.
-Consequently, `FitdecodeActivityExtractor` currently owns FIT decoding as well
-as report assembly and optional weather and elevation enrichment. The application
-use case coordinates only extraction and rendering.
+The Activity context owns the `ActivityReader` port. `FitdecodeActivityReader`
+implements it by translating FIT fields into decoder-independent `Activity`
+entities and does not depend on reporting services or external providers.
+`GenerateMarkdownReport` orchestrates activity reading, optional DEM and weather
+provider calls, report calculation, assembly, and rendering. DEM route sampling,
+coverage handling, interpolation, and hybrid replacement rules remain pure
+Reporting domain behavior.
 
 ### Fixture sanitization
 
@@ -109,17 +112,10 @@ that policy while rebuilding a valid FIT binary.
 
 ## Target Direction
 
-No target-state migration is part of the current architecture. The architecture
-review proposes two application-layer ownership changes for future work:
-
-- replace the report-producing extractor boundary with an activity reader that
-  returns `Activity`, then let an application use case orchestrate enrichment,
-  report assembly, and rendering;
-- move directory planning and execution into an application use case so output
-  eligibility and collisions can be decided before enrichment and rendering.
-
-Until those changes are implemented and their public contracts are approved,
-the current ownership described above remains authoritative.
+The activity-reader and application-owned report orchestration proposed by
+AR-01 are now implemented. The remaining application-layer ownership change is
+to move directory planning and execution into an application use case so output
+eligibility and collisions can be decided before enrichment and rendering.
 
 ## Dependency Rules
 
@@ -144,6 +140,7 @@ The former `infrastructure.fitdecode.builders` and `infrastructure.fitdecode.mod
 ## Extending the Project
 
 - Add another activity format by translating it to `Activity`, `ActivityLap`, and `ActivityRecord`.
+- Implement `ActivityReader` for another source format and inject it into the report use case.
 - Add a report calculation in the reporting domain services and cover happy and failure paths with domain unit tests.
 - Add a new output block through a `ReportSectionRenderer` implementation.
 - Add an external provider by implementing the relevant port and injecting it from the CLI composition root.

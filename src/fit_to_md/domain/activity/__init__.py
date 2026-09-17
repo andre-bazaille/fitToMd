@@ -6,5 +6,12 @@ from fit_to_md.domain.activity.entities import (
     ActivityRecord,
     ActivitySession,
 )
+from fit_to_md.domain.activity.ports import ActivityReader
 
-__all__ = ["Activity", "ActivityLap", "ActivityRecord", "ActivitySession"]
+__all__ = [
+    "Activity",
+    "ActivityLap",
+    "ActivityReader",
+    "ActivityRecord",
+    "ActivitySession",
+]

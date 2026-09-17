@@ -16,7 +16,7 @@ from fit_to_md.domain.reporting.ports import ElevationDiagnostics
 from fit_to_md.domain.reporting.services import SessionSummaryBuilder, TransitionBuilder
 from fit_to_md.infrastructure.config import ConfigFileError, load_option_file
 from fit_to_md.infrastructure.elevation import OpenTopoDataElevationProvider
-from fit_to_md.infrastructure.fitdecode.extractor import FitdecodeActivityExtractor
+from fit_to_md.infrastructure.fitdecode.reader import FitdecodeActivityReader
 from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
 from fit_to_md.infrastructure.weather import OpenMeteoHistoricalWeatherProvider
 
@@ -193,7 +193,11 @@ def _build_default_runtime(
         if elevation_source in {"dem", "hybrid"}
         else None
     )
-    extractor = FitdecodeActivityExtractor(
+    reader = FitdecodeActivityReader()
+    renderer = MarkdownReportRenderer()
+    generator = GenerateMarkdownReport(
+        reader=reader,
+        renderer=renderer,
         summary_builder=SessionSummaryBuilder(
             elevation_smoothing_distance_m=elevation_smoothing_distance,
             min_elevation_change_m=elevation_min_change,
@@ -206,9 +210,8 @@ def _build_default_runtime(
         elevation_mode=elevation_source,
         elevation_sample_distance_m=dem_sample_distance,
     )
-    renderer = MarkdownReportRenderer()
     return _DefaultRuntime(
-        generator=GenerateMarkdownReport(extractor=extractor, renderer=renderer),
+        generator=generator,
         elevation_diagnostics=elevation_provider,
     )
 

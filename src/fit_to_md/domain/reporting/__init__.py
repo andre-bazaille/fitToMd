@@ -1,3 +1,4 @@
+from fit_to_md.domain.reporting.elevation import ElevationEnricher
 from fit_to_md.domain.reporting.entities import (
     FitReport,
     SessionSummary,
@@ -13,6 +14,7 @@ from fit_to_md.domain.reporting.services import (
 
 __all__ = [
     "FitReport",
+    "ElevationEnricher",
     "SessionSummary",
     "SessionSummaryBuilder",
     "Split",
