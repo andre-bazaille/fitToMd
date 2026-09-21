@@ -10,8 +10,8 @@ The generated report includes:
 
 - a session summary with duration, distance, pace or speed, heart rate, cadence,
   elevation, and available weather;
-- completed one-kilometer splits;
-- configurable per-kilometer heart-rate, pace or speed, and grade samples;
+- one-kilometer splits plus the final partial-distance segment;
+- configurable heart-rate, pace or speed, and grade samples for every segment;
 - pause-aware timing derived from FIT timer events;
 - optional historical weather from Open-Meteo; and
 - optional terrain elevation from OpenTopoData.
@@ -120,19 +120,20 @@ convention.
 
 #### Kilometric Splits
 
-| Km | Time | Pace | Elev +/- | Avg HR | Max HR | Avg Cad |
-|---|---|---|---|---|---|---|
-| 1 | 4:45 | 4:45 | -6m | 113 | 133 | 160 |
-| 2 | 5:07 | 5:07 | -2m | 138 | 145 | 162 |
-| 3 | 5:06 | 5:06 | +2m | 140 | 142 | 162 |
-| 4 | 5:22 | 5:22 | +6m | 142 | 147 | 160 |
-| 5 | 5:01 | 5:01 | -3m | 141 | 145 | 162 |
-| 6 | 4:59 | 4:59 | -4m | 142 | 145 | 161 |
-| 7 | 5:00 | 5:00 | +2m | 142 | 145 | 161 |
-| 8 | 5:20 | 5:20 | +1m | 145 | 148 | 160 |
-| 9 | 5:13 | 5:13 | -4m | 145 | 149 | 159 |
-| 10 | 4:59 | 4:59 | +0m | 145 | 147 | 162 |
-| 11 | 5:01 | 5:01 | -1m | 145 | 148 | 162 |
+| Km | Distance | Time | Pace | Elev +/- | Avg HR | Max HR | Avg Cad |
+|---|---|---|---|---|---|---|---|
+| 1 | 1.00 km | 4:45 | 4:45 | -6m | 113 | 133 | 160 |
+| 2 | 1.00 km | 5:07 | 5:07 | -2m | 138 | 145 | 162 |
+| 3 | 1.00 km | 5:06 | 5:06 | +2m | 140 | 142 | 162 |
+| 4 | 1.00 km | 5:22 | 5:22 | +6m | 142 | 147 | 160 |
+| 5 | 1.00 km | 5:01 | 5:01 | -3m | 141 | 145 | 162 |
+| 6 | 1.00 km | 4:59 | 4:59 | -4m | 142 | 145 | 161 |
+| 7 | 1.00 km | 5:00 | 5:00 | +2m | 142 | 145 | 161 |
+| 8 | 1.00 km | 5:20 | 5:20 | +1m | 145 | 148 | 160 |
+| 9 | 1.00 km | 5:13 | 5:13 | -4m | 145 | 149 | 159 |
+| 10 | 1.00 km | 4:59 | 4:59 | +0m | 145 | 147 | 162 |
+| 11 | 1.00 km | 5:01 | 5:01 | -1m | 145 | 148 | 162 |
+| 11.00–11.99 | 0.99 km | 5:00 | 5:03 | +2m | 146 | 149 | 161 |
 
 #### Heart Rate Dynamics (Per Kilometer)
 
@@ -152,7 +153,7 @@ convention.
   - 5:00: 141 bpm (Pace: 4:56/km, Grade: -0.85%)
   - 5:07: 140 bpm (Pace: 4:55/km, Grade: -0.54%)
 
-The full report continues for every completed kilometer.
+The full report continues through the final partial-distance segment.
 
 ## Elevation sources and route smoothing
 
@@ -310,16 +311,18 @@ Practical tuning guidance:
 ## Per-kilometer dynamics
 
 Use `--dynamics-step-size` to control the sampling interval for heart rate, pace
-or speed, and grade within every completed kilometer. The default is 30 seconds.
+or speed, and grade within every completed kilometer and the final partial
+segment. The default is 30 seconds.
 
 ```bash
 fit-to-md activity.fit --dynamics-step-size 10
 ```
 
 Smaller intervals increase detail and report size; larger intervals reduce both.
-The kilometer start and finish are included even when they do not fall exactly
+Every segment's start and finish are included even when they do not fall exactly
 on the requested interval. When timer events are missing, exactly aligned
-one-kilometer laps can supply active durations. If those totals reveal a pause
+one-kilometer laps and a matching terminal partial lap can supply active durations.
+If those totals reveal a pause
 whose location is unknown, dynamics show only boundary samples with an explanatory
 note; intermediate measurements cannot be assigned reliable active times. `--transition-sample-interval` remains available as
 a compatibility alias.

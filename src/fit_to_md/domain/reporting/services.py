@@ -29,6 +29,23 @@ class _BoundaryPoint:
 
 
 @dataclass(frozen=True)
+class _DistanceSegment:
+    kilometer: int
+    start_distance_m: float
+    end_distance_m: float
+    start_boundary: _BoundaryPoint
+    end_boundary: _BoundaryPoint
+
+    @property
+    def distance_m(self) -> float:
+        return self.end_distance_m - self.start_distance_m
+
+    @property
+    def is_partial(self) -> bool:
+        return self.distance_m < _KILOMETER_DISTANCE_M
+
+
+@dataclass(frozen=True)
 class _DistanceAltitudePoint:
     distance_m: float
     altitude_m: float
@@ -164,8 +181,8 @@ class SplitBuilder:
         if record_splits:
             return tuple(record_splits)
 
-        kilometer_laps = _resolve_aligned_kilometer_laps(activity.laps)
-        return tuple(self._build_from_laps(kilometer_laps))
+        distance_laps = _resolve_aligned_distance_laps(activity)
+        return tuple(self._build_from_laps(distance_laps))
 
     def _build_from_records(self, activity: Activity) -> list[Split]:
         records = activity.records
@@ -175,53 +192,47 @@ class SplitBuilder:
         if len(distance_records) < 2:
             return []
 
-        origin_distance_m = distance_records[0].distance_m or 0.0
-        final_distance_m = distance_records[-1].distance_m or origin_distance_m
-        completed_kilometers = _count_completed_kilometers(
-            origin_distance_m, final_distance_m
-        )
-        if completed_kilometers < 1:
+        segments = _build_record_distance_segments(distance_records)
+        if not segments:
             return []
 
-        boundaries: list[_BoundaryPoint] = [
-            _BoundaryPoint(
-                timestamp=distance_records[0].timestamp,
-                elapsed_time_s=distance_records[0].elapsed_time_s,
-                altitude_m=distance_records[0].altitude_m,
-            )
-        ]
         splits: list[Split] = []
-
-        for kilometer in range(1, completed_kilometers + 1):
-            target_distance_m = origin_distance_m + (kilometer * 1000)
-            crossing = _interpolate_record_at_distance(
-                distance_records, target_distance_m
-            )
-            if crossing is None:
-                break
-
-            previous_boundary = boundaries[-1]
+        origin_distance_m = distance_records[0].distance_m or 0.0
+        for segment in segments:
             window_records = _select_records_in_boundary_window(
                 records=records,
-                start_boundary=previous_boundary,
-                end_boundary=crossing,
+                start_boundary=segment.start_boundary,
+                end_boundary=segment.end_boundary,
             )
 
             split_time_s = _resolve_split_duration_s(
-                activity, kilometer, origin_distance_m, previous_boundary, crossing
+                activity,
+                segment.kilometer,
+                segment.distance_m,
+                origin_distance_m,
+                segment.start_boundary,
+                segment.end_boundary,
             )
+            pace_seconds_per_km = None
+            if split_time_s is not None and segment.distance_m > 0:
+                pace_seconds_per_km = split_time_s / (segment.distance_m / 1000)
             elevation_delta_m = None
             if (
-                previous_boundary.altitude_m is not None
-                and crossing.altitude_m is not None
+                segment.start_boundary.altitude_m is not None
+                and segment.end_boundary.altitude_m is not None
             ):
-                elevation_delta_m = crossing.altitude_m - previous_boundary.altitude_m
+                elevation_delta_m = (
+                    segment.end_boundary.altitude_m
+                    - segment.start_boundary.altitude_m
+                )
 
             splits.append(
                 Split(
-                    kilometer=kilometer,
+                    kilometer=segment.kilometer,
+                    distance_m=segment.distance_m,
+                    is_partial=segment.is_partial,
                     time_seconds=split_time_s,
-                    pace_seconds_per_km=split_time_s,
+                    pace_seconds_per_km=pace_seconds_per_km,
                     elevation_delta_m=elevation_delta_m,
                     avg_heart_rate_bpm=_average_int(
                         record.heart_rate_bpm for record in window_records
@@ -234,7 +245,6 @@ class SplitBuilder:
                     ),
                 )
             )
-            boundaries.append(crossing)
 
         return splits
 
@@ -259,6 +269,12 @@ class SplitBuilder:
             splits.append(
                 Split(
                     kilometer=kilometer,
+                    distance_m=lap.total_distance_m or 0.0,
+                    is_partial=(
+                        kilometer == len(laps)
+                        and lap.total_distance_m is not None
+                        and lap.total_distance_m < _KILOMETER_DISTANCE_M
+                    ),
                     time_seconds=lap.total_timer_time_s,
                     pace_seconds_per_km=pace_seconds_per_km,
                     elevation_delta_m=elevation_delta_m,
@@ -303,44 +319,32 @@ class TransitionBuilder:
         if len(distance_records) < 2:
             return tuple()
 
-        origin_distance_m = distance_records[0].distance_m or 0.0
-        final_distance_m = distance_records[-1].distance_m or origin_distance_m
-        completed_kilometers = _count_completed_kilometers(
-            origin_distance_m, final_distance_m
-        )
-        if completed_kilometers < 1:
+        segments = _build_record_distance_segments(distance_records)
+        if not segments:
             return tuple()
 
         smoothed_altitude_profile = _build_smoothed_altitude_profile(
             activity.records,
             elevation_smoothing_distance_m=self._elevation_smoothing_distance_m,
         )
-        boundaries: list[_BoundaryPoint] = [
-            _BoundaryPoint(
-                timestamp=distance_records[0].timestamp,
-                elapsed_time_s=distance_records[0].elapsed_time_s,
-                altitude_m=distance_records[0].altitude_m,
-            )
-        ]
         transitions: list[TransitionDynamics] = []
-        for kilometer in range(1, completed_kilometers + 1):
-            target_distance_m = origin_distance_m + (kilometer * 1000)
-            end_boundary = _interpolate_record_at_distance(
-                distance_records, target_distance_m
-            )
-            if end_boundary is None:
-                continue
-
-            start_boundary = boundaries[-1]
+        origin_distance_m = distance_records[0].distance_m or 0.0
+        for segment in segments:
+            start_boundary = segment.start_boundary
+            end_boundary = segment.end_boundary
             record_duration_s = _resolve_boundary_duration_s(
                 start_boundary, end_boundary
             )
             duration_s = _resolve_split_duration_s(
-                activity, kilometer, origin_distance_m, start_boundary, end_boundary
+                activity,
+                segment.kilometer,
+                segment.distance_m,
+                origin_distance_m,
+                start_boundary,
+                end_boundary,
             )
             timing_is_uncertain = duration_s != record_duration_s
             if duration_s <= 0:
-                boundaries.append(end_boundary)
                 continue
 
             samples: list[TransitionSample] = []
@@ -385,7 +389,7 @@ class TransitionBuilder:
             if samples:
                 transitions.append(
                     TransitionDynamics(
-                        label=f"Km {kilometer}",
+                        label=_format_distance_segment_label(segment),
                         samples=tuple(samples),
                         sampling_note=(
                             "Intermediate samples unavailable: pause timing was not recorded."
@@ -394,7 +398,6 @@ class TransitionBuilder:
                         ),
                     )
                 )
-            boundaries.append(end_boundary)
 
         return tuple(transitions)
 
@@ -402,6 +405,7 @@ class TransitionBuilder:
 def _resolve_split_duration_s(
     activity: Activity,
     kilometer: int,
+    segment_distance_m: float,
     origin_distance_m: float,
     start: _BoundaryPoint,
     end: _BoundaryPoint,
@@ -413,11 +417,28 @@ def _resolve_split_duration_s(
         return record_duration_s
 
     # Only a contiguous prefix of exact kilometer laps is authoritative at the
-    # record-derived boundaries. Approximate laps and workout laps are not.
-    for lap in activity.laps[:kilometer]:
+    # record-derived boundaries. A matching final partial lap can then supply
+    # the duration of the remaining distance.
+    for lap in activity.laps[: kilometer - 1]:
         if lap.total_distance_m != _KILOMETER_DISTANCE_M:
             return record_duration_s
-    lap_duration_s = activity.laps[kilometer - 1].total_timer_time_s
+    current_lap = activity.laps[kilometer - 1]
+    lap_distance_m = current_lap.total_distance_m
+    if lap_distance_m is None:
+        return record_duration_s
+    if segment_distance_m == _KILOMETER_DISTANCE_M:
+        if lap_distance_m != _KILOMETER_DISTANCE_M:
+            return record_duration_s
+    else:
+        if kilometer != len(activity.laps):
+            return record_duration_s
+        if (
+            abs(lap_distance_m - segment_distance_m)
+            > _KILOMETER_ALIGNMENT_TOLERANCE_M
+        ):
+            return record_duration_s
+
+    lap_duration_s = current_lap.total_timer_time_s
     if (
         lap_duration_s is None
         or not isfinite(lap_duration_s)
@@ -451,9 +472,8 @@ def resolve_activity_start_time(activity: Activity) -> datetime | None:
     return session.end_time
 
 
-def _resolve_aligned_kilometer_laps(
-    laps: tuple[ActivityLap, ...],
-) -> tuple[ActivityLap, ...]:
+def _resolve_aligned_distance_laps(activity: Activity) -> tuple[ActivityLap, ...]:
+    laps = activity.laps
     aligned_laps: list[ActivityLap] = []
     cumulative_distance_m = 0.0
 
@@ -462,14 +482,35 @@ def _resolve_aligned_kilometer_laps(
             break
 
         assert lap.total_distance_m is not None
-        cumulative_distance_m += lap.total_distance_m
+        candidate_distance_m = cumulative_distance_m + lap.total_distance_m
         expected_boundary_m = kilometer * _KILOMETER_DISTANCE_M
         if (
-            abs(cumulative_distance_m - expected_boundary_m)
+            abs(candidate_distance_m - expected_boundary_m)
             > _KILOMETER_ALIGNMENT_TOLERANCE_M
         ):
             break
+        cumulative_distance_m = candidate_distance_m
         aligned_laps.append(lap)
+
+    next_lap_index = len(aligned_laps)
+    if next_lap_index >= len(laps):
+        return tuple(aligned_laps)
+
+    final_lap = laps[next_lap_index]
+    if next_lap_index != len(laps) - 1 or not _is_partial_distance_lap(final_lap):
+        return tuple(aligned_laps)
+
+    session_distance_m = activity.session.total_distance_m
+    assert final_lap.total_distance_m is not None
+    if session_distance_m is None:
+        return tuple(aligned_laps)
+    expected_total_distance_m = cumulative_distance_m + final_lap.total_distance_m
+    if (
+        abs(session_distance_m - expected_total_distance_m)
+        > _KILOMETER_ALIGNMENT_TOLERANCE_M
+    ):
+        return tuple(aligned_laps)
+    aligned_laps.append(final_lap)
 
     return tuple(aligned_laps)
 
@@ -483,10 +524,82 @@ def _is_kilometer_lap(lap: ActivityLap) -> bool:
     )
 
 
-def _count_completed_kilometers(
-    origin_distance_m: float, final_distance_m: float
-) -> int:
-    return int(max(0.0, final_distance_m - origin_distance_m) // 1000)
+def _is_partial_distance_lap(lap: ActivityLap) -> bool:
+    if lap.total_timer_time_s is None or lap.total_distance_m is None:
+        return False
+    return 0 < lap.total_distance_m < _KILOMETER_DISTANCE_M
+
+
+def _build_record_distance_segments(
+    records: list[ActivityRecord],
+) -> tuple[_DistanceSegment, ...]:
+    if len(records) < 2:
+        return ()
+
+    origin_distance_m = records[0].distance_m
+    final_distance_m = records[-1].distance_m
+    if origin_distance_m is None or final_distance_m is None:
+        return ()
+    total_distance_m = final_distance_m - origin_distance_m
+    if total_distance_m <= 0:
+        return ()
+
+    start_boundary = _boundary_from_record(records[0])
+    start_distance_m = 0.0
+    completed_kilometers = int(total_distance_m // _KILOMETER_DISTANCE_M)
+    segments: list[_DistanceSegment] = []
+
+    for kilometer in range(1, completed_kilometers + 1):
+        end_distance_m = kilometer * _KILOMETER_DISTANCE_M
+        end_boundary = _interpolate_record_at_distance(
+            records, origin_distance_m + end_distance_m
+        )
+        if end_boundary is None:
+            break
+        segments.append(
+            _DistanceSegment(
+                kilometer=kilometer,
+                start_distance_m=start_distance_m,
+                end_distance_m=end_distance_m,
+                start_boundary=start_boundary,
+                end_boundary=end_boundary,
+            )
+        )
+        start_distance_m = end_distance_m
+        start_boundary = end_boundary
+
+    if (
+        len(segments) == completed_kilometers
+        and total_distance_m > start_distance_m
+    ):
+        segments.append(
+            _DistanceSegment(
+                kilometer=len(segments) + 1,
+                start_distance_m=start_distance_m,
+                end_distance_m=total_distance_m,
+                start_boundary=start_boundary,
+                end_boundary=_boundary_from_record(records[-1]),
+            )
+        )
+
+    return tuple(segments)
+
+
+def _boundary_from_record(record: ActivityRecord) -> _BoundaryPoint:
+    return _BoundaryPoint(
+        timestamp=record.timestamp,
+        elapsed_time_s=record.elapsed_time_s,
+        altitude_m=record.altitude_m,
+    )
+
+
+def _format_distance_segment_label(segment: _DistanceSegment) -> str:
+    if not segment.is_partial:
+        return f"Km {segment.kilometer}"
+    return (
+        f"Km {segment.start_distance_m / 1000:.2f}–"
+        f"{segment.end_distance_m / 1000:.2f}"
+    )
 
 
 def _resolve_activity_type(activity: Activity) -> str | None:

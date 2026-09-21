@@ -1,3 +1,11 @@
+## 2026-09-21
+
+- Included the final partial-distance segment in kilometric splits and heart-rate
+  dynamics, with its actual distance, normalized per-kilometer pace, complete
+  boundary sampling, and cautious terminal-lap fallback. Partial timing now
+  requires the matching lap to be terminal, and rejected near-kilometer laps no
+  longer corrupt the cumulative-distance validation.
+
 ## 2026-09-17
 
 - Allowed directory inputs to use `--output` with an existing destination

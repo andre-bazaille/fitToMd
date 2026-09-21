@@ -198,12 +198,15 @@ def test_generator_builds_summary_splits_and_transitions() -> None:
     assert report.summary.avg_temperature_c == pytest.approx(17.0)
     assert report.summary.min_temperature_c == pytest.approx(12.0)
     assert report.summary.max_temperature_c == pytest.approx(21.0)
-    assert len(report.splits) == 2
+    assert len(report.splits) == 3
     assert report.splits[0].time_seconds == pytest.approx(300.0, abs=0.01)
     assert report.splits[0].elevation_delta_m == pytest.approx(10.0, abs=0.2)
     assert report.splits[1].time_seconds == pytest.approx(300.0, abs=0.01)
     assert report.splits[1].elevation_delta_m == pytest.approx(-5.0, abs=0.2)
-    assert len(report.transitions) == 2
+    assert report.splits[2].distance_m == pytest.approx(100.0)
+    assert report.splits[2].time_seconds == pytest.approx(120.0, abs=0.01)
+    assert report.splits[2].pace_seconds_per_km == pytest.approx(1200.0)
+    assert len(report.transitions) == 3
     assert report.transitions[0].label == "Km 1"
     assert report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
     assert report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(300.0)
@@ -323,9 +326,10 @@ def test_generator_builds_kilometer_transitions_without_laps() -> None:
 
     report = generator.build_report(Path("activity.fit"))
 
-    assert len(report.transitions) == 2
+    assert len(report.transitions) == 3
     assert report.transitions[0].label == "Km 1"
     assert report.transitions[1].label == "Km 2"
+    assert report.transitions[2].label == "Km 2.00–2.10"
     assert report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
     assert report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(300.0)
 

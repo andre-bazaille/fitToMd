@@ -36,6 +36,8 @@ def test_render_formats_expected_markdown_sections() -> None:
         splits=(
             Split(
                 kilometer=1,
+                distance_m=1000.0,
+                is_partial=False,
                 time_seconds=330.0,
                 pace_seconds_per_km=330.0,
                 elevation_delta_m=5.0,
@@ -68,7 +70,7 @@ def test_render_formats_expected_markdown_sections() -> None:
     assert "- **Total Distance:** 10.50 km" in markdown
     assert "- **Avg Pace:** 5:15/km" in markdown
     assert "- **Weather:** Avg 18.4C / Min 15.0C / Max 22.5C [fit]" in markdown
-    assert "| 1 | 5:30 | 5:30 | +5m | 125 | 135 | 168 |" in markdown
+    assert "| 1 | 1.00 km | 5:30 | 5:30 | +5m | 125 | 135 | 168 |" in markdown
     assert "## Heart Rate Dynamics (Per Kilometer)" in markdown
     assert "- **Km 4**" in markdown
     assert "0:10: 165 bpm (Pace: -, Grade: 0.00%)" in markdown
@@ -113,6 +115,45 @@ def test_render_omits_missing_transition_grade() -> None:
 
     assert "0:00: 155 bpm (Pace: 5:00/km)" in markdown
     assert "Grade:" not in markdown
+
+
+def test_render_labels_final_partial_split_and_normalized_pace() -> None:
+    report = FitReport(
+        summary=SessionSummary(
+            start_time=None,
+            activity_name=None,
+            activity_type=None,
+            total_distance_km=10.772,
+            total_timer_time_s=None,
+            total_elapsed_time_s=None,
+            total_ascent_m=None,
+            total_descent_m=None,
+            avg_heart_rate_bpm=None,
+            max_heart_rate_bpm=None,
+            avg_cadence_spm=None,
+            avg_speed_kmh=None,
+            avg_temperature_c=None,
+            min_temperature_c=None,
+            max_temperature_c=None,
+        ),
+        splits=(
+            Split(
+                kilometer=11,
+                distance_m=772.07,
+                is_partial=True,
+                time_seconds=216.65,
+                pace_seconds_per_km=280.61,
+                elevation_delta_m=6.0,
+                avg_heart_rate_bpm=162,
+                max_heart_rate_bpm=174,
+                avg_cadence_spm=162,
+            ),
+        ),
+    )
+
+    markdown = MarkdownReportRenderer().render(report)
+
+    assert "| 10.00–10.77 | 0.77 km | 3:36 | 4:40 |" in markdown
 
 
 class CustomSection:

@@ -53,8 +53,8 @@ class SplitSectionRenderer:
             return ["No split data available."]
 
         lines = [
-            "| Km | Time | Pace | Elev +/- | Avg HR | Max HR | Avg Cad |",
-            "|---|---|---|---|---|---|---|",
+            "| Km | Distance | Time | Pace | Elev +/- | Avg HR | Max HR | Avg Cad |",
+            "|---|---|---|---|---|---|---|---|",
         ]
         for split in report.splits:
             lines.append(self._render_split_row(split))
@@ -62,13 +62,22 @@ class SplitSectionRenderer:
 
     def _render_split_row(self, split: Split) -> str:
         return (
-            f"| {split.kilometer} | {_format_duration(split.time_seconds)} | "
+            f"| {_format_split_label(split)} | {split.distance_m / 1000:.2f} km | "
+            f"{_format_duration(split.time_seconds)} | "
             f"{_format_duration(split.pace_seconds_per_km)} | "
             f"{_format_signed_metric(split.elevation_delta_m, 'm')} | "
             f"{_format_integer(split.avg_heart_rate_bpm)} | "
             f"{_format_integer(split.max_heart_rate_bpm)} | "
             f"{_format_integer(split.avg_cadence_spm)} |"
         )
+
+
+def _format_split_label(split: Split) -> str:
+    if not split.is_partial:
+        return str(split.kilometer)
+    start_distance_km = split.kilometer - 1
+    end_distance_km = start_distance_km + (split.distance_m / 1000)
+    return f"{start_distance_km:.2f}–{end_distance_km:.2f}"
 
 
 class TransitionSectionRenderer:

@@ -26,9 +26,11 @@ Extracted from the session message and normalized before entering the domain:
 
 ### **B. Segmented Data (Splits Table)**
 
-Calculated based on 1.0 km increments (or using native lap messages if preferred):
+Calculated based on 1.0 km increments plus a final partial-distance segment (or
+using native lap messages if preferred):
 
-* **Lap Number:** 1, 2, 3...  
+* **Segment:** Kilometer number, or explicit distance range for the final partial segment.
+* **Distance:** Actual segment distance, including the final fraction.
 * **Pace:** Format MM:SS per km.  
 * **Elevation Delta:** Net gain/loss for that specific kilometer.  
 * **HR Profile:** Average and Maximum Heart Rate for that kilometer.  
@@ -36,7 +38,7 @@ Calculated based on 1.0 km increments (or using native lap messages if preferred
 
 ### **C. Per-Kilometer Dynamics Samples**
 
-To allow the LLM to assess heart-rate, pace, and grade evolution, the tool should extract samples throughout every completed kilometer:
+To allow the LLM to assess heart-rate, pace, and grade evolution, the tool should extract samples throughout every completed kilometer and the final partial-distance segment:
 
 * **Sample Rate:** Configurable interval, defaulting to every 30 seconds.
 * **Data Points:** \[Elapsed Time, Heart Rate, Speed, Grade\]. Grade should use the native FIT field when available, otherwise estimate it from the same smoothed altitude profile used for elevation gain/loss.
@@ -81,7 +83,7 @@ The output follows this structure to ensure LLM readability:
 
 ## **6\. Token Optimization Strategy**
 
-* **Sampling:** Instead of 1-second data for a 2-hour run (7200 rows), use 1-km summaries and configurable samples within each completed kilometer.
+* **Sampling:** Instead of 1-second data for a 2-hour run (7200 rows), use 1-km summaries and configurable samples within each segment, including the final fraction.
 * **Precision:** Round all floats to 2 decimal places.
 
 ## **7\. Architecture and External Enrichment**

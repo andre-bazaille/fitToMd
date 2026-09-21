@@ -47,6 +47,7 @@ def test_reporting_services_build_report_parts_from_domain_activity() -> None:
     assert summary.total_distance_km == pytest.approx(1.0)
     assert summary.total_timer_time_s == pytest.approx(300.0)
     assert len(splits) == 1
+    assert splits[0].distance_m == pytest.approx(1000.0)
     assert splits[0].elevation_delta_m == pytest.approx(10.0)
     assert splits[0].avg_heart_rate_bpm == 140
     assert len(dynamics) == 1
@@ -164,15 +165,22 @@ def test_reporting_uses_record_boundaries_instead_of_workout_laps() -> None:
     splits = SplitBuilder().build(activity)
     dynamics = TransitionBuilder(sample_interval_s=100).build(activity)
 
-    assert [split.kilometer for split in splits] == [1, 2]
-    assert [split.time_seconds for split in splits] == pytest.approx([175.0, 100.0])
-    assert [transition.label for transition in dynamics] == ["Km 1", "Km 2"]
+    assert [split.kilometer for split in splits] == [1, 2, 3]
+    assert [split.time_seconds for split in splits] == pytest.approx(
+        [175.0, 100.0, 25.0]
+    )
+    assert [transition.label for transition in dynamics] == [
+        "Km 1",
+        "Km 2",
+        "Km 2.00–2.25",
+    ]
     assert [transition.samples[-1].elapsed_seconds for transition in dynamics] == (
-        pytest.approx([175.0, 100.0])
+        pytest.approx([175.0, 100.0, 25.0])
     )
     assert [transition.samples[-1].heart_rate_bpm for transition in dynamics] == [
         138,
         148,
+        150,
     ]
 
 
@@ -195,14 +203,16 @@ def test_reporting_ignores_interleaved_recovery_laps_when_records_are_usable() -
     splits = SplitBuilder().build(activity)
     dynamics = TransitionBuilder(sample_interval_s=100).build(activity)
 
-    assert [split.kilometer for split in splits] == [1, 2]
-    assert [split.time_seconds for split in splits] == pytest.approx([100.0, 100.0])
+    assert [split.kilometer for split in splits] == [1, 2, 3]
+    assert [split.time_seconds for split in splits] == pytest.approx(
+        [100.0, 100.0, 20.0]
+    )
     assert [transition.samples[-1].elapsed_seconds for transition in dynamics] == (
-        pytest.approx([100.0, 100.0])
+        pytest.approx([100.0, 100.0, 20.0])
     )
 
 
-def test_reporting_omits_sub_kilometer_lap_output() -> None:
+def test_reporting_includes_sub_kilometer_record_output() -> None:
     start = datetime(2026, 9, 16, 9, 0, 0)
     activity = Activity(
         laps=(_lap(1, distance_m=500.0, timer_time_s=50.0),),
@@ -212,8 +222,115 @@ def test_reporting_omits_sub_kilometer_lap_output() -> None:
         ),
     )
 
-    assert SplitBuilder().build(activity) == ()
-    assert TransitionBuilder().build(activity) == ()
+    splits = SplitBuilder().build(activity)
+    dynamics = TransitionBuilder().build(activity)
+
+    assert len(splits) == 1
+    assert splits[0].kilometer == 1
+    assert splits[0].distance_m == pytest.approx(500.0)
+    assert splits[0].time_seconds == pytest.approx(50.0)
+    assert splits[0].pace_seconds_per_km == pytest.approx(100.0)
+    assert [transition.label for transition in dynamics] == [
+        "Km 0.00–0.50"
+    ]
+
+
+def test_reporting_includes_final_partial_segment() -> None:
+    start = datetime(2026, 9, 19, 9, 14, 50)
+    activity = Activity(
+        records=(
+            _record(start, 0.0, 0.0, 20.0, 120),
+            _record(
+                start + timedelta(seconds=2493.35),
+                2493.35,
+                10000.0,
+                26.6,
+                173,
+            ),
+            _record(
+                start + timedelta(seconds=2710.0),
+                2710.0,
+                10772.07,
+                32.6,
+                162,
+            ),
+        )
+    )
+
+    splits = SplitBuilder().build(activity)
+    dynamics = TransitionBuilder(sample_interval_s=30).build(activity)
+
+    assert len(splits) == 11
+    assert splits[-1].kilometer == 11
+    assert splits[-1].distance_m == pytest.approx(772.07)
+    assert splits[-1].time_seconds == pytest.approx(216.65)
+    assert splits[-1].pace_seconds_per_km == pytest.approx(280.61, abs=0.01)
+    assert len(dynamics) == 11
+    assert dynamics[-1].label == "Km 10.00–10.77"
+    assert dynamics[-1].samples[-1].elapsed_seconds == pytest.approx(216.65)
+
+
+def test_reporting_does_not_append_partial_segment_at_exact_kilometer() -> None:
+    start = datetime(2026, 9, 19, 9, 0, 0)
+    activity = Activity(
+        records=(
+            _record(start, 0.0, 0.0, 10.0, 120),
+            _record(start + timedelta(seconds=600), 600.0, 2000.0, 20.0, 140),
+        )
+    )
+
+    assert len(SplitBuilder().build(activity)) == 2
+    assert len(TransitionBuilder().build(activity)) == 2
+
+
+def test_reporting_excludes_pause_from_final_partial_segment() -> None:
+    start = datetime(2026, 9, 19, 9, 0, 0)
+    activity = Activity(
+        has_active_record_timing=True,
+        records=(
+            _record(start, 0.0, 0.0, 10.0, 120),
+            _record(start + timedelta(seconds=300), 300.0, 1000.0, 15.0, 140),
+            _record(start + timedelta(seconds=420), 300.0, 1000.0, 15.0, 100),
+            _record(start + timedelta(seconds=600), 480.0, 1500.0, 20.0, 150),
+        ),
+    )
+
+    splits = SplitBuilder().build(activity)
+    dynamics = TransitionBuilder(sample_interval_s=60).build(activity)
+
+    assert splits[-1].distance_m == pytest.approx(500.0)
+    assert splits[-1].time_seconds == pytest.approx(180.0)
+    assert splits[-1].pace_seconds_per_km == pytest.approx(360.0)
+    assert dynamics[-1].samples[-1].elapsed_seconds == pytest.approx(180.0)
+
+
+def test_reporting_rejects_non_terminal_partial_lap_timing() -> None:
+    start = datetime(2026, 9, 19, 9, 0, 0)
+    activity = Activity(
+        laps=(
+            _lap(1, distance_m=1000.0, timer_time_s=300.0),
+            _lap(2, distance_m=480.0, timer_time_s=140.0),
+            _lap(3, distance_m=20.0, timer_time_s=10.0),
+        ),
+        records=(
+            _record(start, 0.0, 0.0, 10.0, 120),
+            _record(start + timedelta(seconds=300), 300.0, 1000.0, 15.0, 140),
+            _record(start + timedelta(seconds=450), 450.0, 1500.0, 20.0, 150),
+        ),
+    )
+
+    splits = SplitBuilder().build(activity)
+    dynamics = TransitionBuilder(sample_interval_s=60).build(activity)
+
+    assert splits[-1].distance_m == pytest.approx(500.0)
+    assert splits[-1].time_seconds == pytest.approx(150.0)
+    assert [sample.elapsed_seconds for sample in dynamics[-1].samples] == [
+        0.0,
+        60.0,
+        120.0,
+        150.0,
+    ]
+    assert dynamics[-1].sampling_note is None
 
 
 def test_reporting_uses_sequential_labels_for_aligned_lap_only_fallback() -> None:
@@ -228,6 +345,45 @@ def test_reporting_uses_sequential_labels_for_aligned_lap_only_fallback() -> Non
 
     assert [split.kilometer for split in splits] == [1, 2]
     assert [split.time_seconds for split in splits] == pytest.approx([300.0, 310.0])
+
+
+def test_reporting_includes_matching_terminal_partial_lap_fallback() -> None:
+    activity = Activity(
+        session=ActivitySession(total_distance_m=1772.07),
+        laps=(
+            _lap(1, distance_m=1000.0, timer_time_s=300.0),
+            _lap(2, distance_m=772.07, timer_time_s=216.0),
+        ),
+    )
+
+    splits = SplitBuilder().build(activity)
+
+    assert [split.distance_m for split in splits] == pytest.approx([1000.0, 772.07])
+    assert splits[-1].pace_seconds_per_km == pytest.approx(279.77, abs=0.01)
+
+
+@pytest.mark.parametrize(
+    ("final_distance_m", "session_distance_m"),
+    ((980.0, 1970.0), (970.0, 1960.0)),
+)
+def test_lap_fallback_counts_rejected_near_kilometer_only_once(
+    final_distance_m: float,
+    session_distance_m: float,
+) -> None:
+    activity = Activity(
+        session=ActivitySession(total_distance_m=session_distance_m),
+        laps=(
+            _lap(1, distance_m=990.0, timer_time_s=300.0),
+            _lap(2, distance_m=final_distance_m, timer_time_s=290.0),
+        ),
+    )
+
+    splits = SplitBuilder().build(activity)
+
+    assert [split.distance_m for split in splits] == pytest.approx(
+        [990.0, final_distance_m]
+    )
+    assert splits[-1].is_partial is True
 
 
 @pytest.mark.parametrize(

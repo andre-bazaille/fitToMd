@@ -27,8 +27,8 @@ FIT_EXPECTATIONS = {
         "avg_speed_kmh": 11.728150527465719,
         "ascent_m": 171.5,
         "descent_m": 158.8,
-        "splits": 11,
-        "transitions": 11,
+        "splits": 12,
+        "transitions": 12,
     },
     "0002.fit": {
         "distance_km": 12.81122,
@@ -40,8 +40,8 @@ FIT_EXPECTATIONS = {
         "avg_speed_kmh": 11.34501820918983,
         "ascent_m": 192.7,
         "descent_m": 188.5,
-        "splits": 12,
-        "transitions": 12,
+        "splits": 13,
+        "transitions": 13,
     },
     "0003.fit": {
         "distance_km": 8.96621,
@@ -53,8 +53,8 @@ FIT_EXPECTATIONS = {
         "avg_speed_kmh": 11.90076293379808,
         "ascent_m": 303.4,
         "descent_m": 404.8,
-        "splits": 8,
-        "transitions": 8,
+        "splits": 9,
+        "transitions": 9,
     },
     "0004.fit": {
         "distance_km": 14.07929,
@@ -66,8 +66,8 @@ FIT_EXPECTATIONS = {
         "avg_speed_kmh": 11.230683327417252,
         "ascent_m": 188.96862745098048,
         "descent_m": 187.87968514328816,
-        "splits": 14,
-        "transitions": 14,
+        "splits": 15,
+        "transitions": 15,
     },
 }
 
@@ -151,6 +151,21 @@ def test_reader_and_application_decode_real_fit_files(
     assert report.summary.max_temperature_c is None
     assert len(report.splits) == expected["splits"]
     assert len(report.transitions) == expected["transitions"]
+    distance_records = [
+        record
+        for record in decoded_fit_files[file_name].activity.records
+        if record.distance_m is not None
+    ]
+    assert distance_records[0].distance_m is not None
+    assert distance_records[-1].distance_m is not None
+    record_distance_m = (
+        distance_records[-1].distance_m - distance_records[0].distance_m
+    )
+    expected_final_distance_m = record_distance_m % 1000
+    assert report.splits[-1].distance_m == pytest.approx(
+        expected_final_distance_m, abs=0.1
+    )
+    assert "(final" not in report.transitions[-1].label
     assert report.transitions[0].label == "Km 1"
     assert report.transitions[0].samples[0].elapsed_seconds == pytest.approx(0.0)
     assert report.transitions[0].samples[-1].elapsed_seconds == pytest.approx(
@@ -184,7 +199,10 @@ def test_renderer_generates_markdown_for_real_fit_files(
     assert "## Heart Rate Dynamics (Per Kilometer)" in markdown
     assert "- **Avg Pace:**" in markdown
     assert "- **Weather:** FIT and historical weather data unavailable" in markdown
-    assert "| Km | Time | Pace | Elev +/- | Avg HR | Max HR | Avg Cad |" in markdown
+    assert (
+        "| Km | Distance | Time | Pace | Elev +/- | Avg HR | Max HR | Avg Cad |"
+        in markdown
+    )
     assert "(Pace:" in markdown
     assert "- **Km 1**" in markdown
     assert "0:00:" in markdown

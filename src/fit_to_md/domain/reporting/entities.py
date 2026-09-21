@@ -56,6 +56,8 @@ class Split:
     avg_heart_rate_bpm: int | None
     max_heart_rate_bpm: int | None
     avg_cadence_spm: int | None
+    distance_m: float = 1000.0
+    is_partial: bool = False
 
 
 @dataclass(frozen=True)
