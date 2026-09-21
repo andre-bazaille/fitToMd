@@ -61,8 +61,11 @@ class GenerateMarkdownReportBatch:
         self,
         sources: Sequence[Path],
         naming: BatchOutputNaming,
+        output_directory: Path | None = None,
     ) -> Iterator[BatchReportOutcome]:
-        plans = tuple(self._plan(source, naming) for source in sources)
+        plans = tuple(
+            self._plan(source, naming, output_directory) for source in sources
+        )
         output_groups = self._output_groups(plans)
 
         for plan in plans:
@@ -130,9 +133,19 @@ class GenerateMarkdownReportBatch:
                 generated=generated,
             )
 
-    def _plan(self, source: Path, naming: BatchOutputNaming) -> _PlannedReport:
+    def _plan(
+        self,
+        source: Path,
+        naming: BatchOutputNaming,
+        output_directory: Path | None,
+    ) -> _PlannedReport:
         if naming is BatchOutputNaming.SOURCE_NAME:
-            output = source.with_suffix(".md")
+            output_name = source.with_suffix(".md").name
+            output = (
+                output_directory / output_name
+                if output_directory is not None
+                else source.with_suffix(".md")
+            )
             try:
                 existing = self._writer.is_file(output)
             except OSError as error:
@@ -142,7 +155,9 @@ class GenerateMarkdownReportBatch:
         try:
             metadata = self._generator.inspect(source)
             matching_outputs = activity_time_output_candidates(
-                source, metadata.start_time
+                source,
+                metadata.start_time,
+                output_directory=output_directory,
             )
             existing = any(self._writer.is_file(path) for path in matching_outputs)
         except (ActivityReadError, ActivityTimeUnavailableError, OSError) as error:
@@ -166,12 +181,16 @@ class GenerateMarkdownReportBatch:
 
 
 def activity_time_output_candidates(
-    source: Path, start_time: datetime | None
+    source: Path,
+    start_time: datetime | None,
+    *,
+    output_directory: Path | None = None,
 ) -> tuple[Path, ...]:
     if start_time is None:
         raise ActivityTimeUnavailableError(
             "Activity start time unavailable; cannot use activity time for output name."
         )
-    portable_output = source.with_name(f"{start_time.strftime('%Y-%m-%d %H-%M')}.md")
-    legacy_output = source.with_name(f"{start_time.strftime('%Y-%m-%d %H:%M')}.md")
+    destination = output_directory or source.parent
+    portable_output = destination / f"{start_time.strftime('%Y-%m-%d %H-%M')}.md"
+    legacy_output = destination / f"{start_time.strftime('%Y-%m-%d %H:%M')}.md"
     return portable_output, legacy_output

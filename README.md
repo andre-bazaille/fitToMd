@@ -80,18 +80,26 @@ fit-to-md activities/
 
 Each FIT file is written beside its source using the automatic `<fit-name>.md`
 name. Existing Markdown files are skipped, so the command can be rerun to
-process only new activities. Use `--output-by-activity-time` to match files by
-the `YYYY-MM-DD HH-MM.md` activity-time name instead:
+process only new activities. Pass an existing output directory to `--output` to
+write all reports there instead:
+
+```bash
+fit-to-md activities/ --output reports/
+```
+
+Use `--output-by-activity-time` to match files by the `YYYY-MM-DD HH-MM.md`
+activity-time name instead:
 
 ```bash
 fit-to-md activities/ --output-by-activity-time
 ```
 
-Directory input does not support `--output`, and nested directories are not
-scanned. Newly generated reports are concatenated on standard output. A failed
-file does not stop the remaining files; the command returns exit code `1` after
-the batch completes. For compatibility, directory processing also recognizes and
-skips reports created with the former `YYYY-MM-DD HH:MM.md` naming convention.
+For directory input, `--output` must name an existing directory. Nested
+directories are not scanned. Newly generated reports are concatenated on standard
+output. A failed file does not stop the remaining files; the command returns exit
+code `1` after the batch completes. For compatibility, directory processing also
+recognizes and skips reports created with the former `YYYY-MM-DD HH:MM.md` naming
+convention.
 
 ## Example output
 

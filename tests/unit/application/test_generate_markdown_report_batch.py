@@ -160,6 +160,55 @@ def test_activity_time_collisions_are_planned_before_generation(
     assert writer.contents[tmp_path / "2026-09-17 08-10.md"] == "# unique"
 
 
+def test_batch_writes_activity_time_output_to_selected_directory(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    source = tmp_path / "activities" / "activity.fit"
+    output_directory = tmp_path / "reports"
+    generator = StubGenerator(events)
+    generator.start_times[source] = datetime(2026, 9, 17, 7, 5)
+    generator.markdown[source] = "# report"
+    writer = StubWriter(events)
+
+    outcomes = list(
+        GenerateMarkdownReportBatch(generator, writer).execute(
+            [source],
+            BatchOutputNaming.ACTIVITY_TIME,
+            output_directory=output_directory,
+        )
+    )
+
+    expected_output = output_directory / "2026-09-17 07-05.md"
+    assert [outcome.status for outcome in outcomes] == [BatchReportStatus.SUCCESS]
+    assert outcomes[0].output == expected_output
+    assert writer.contents == {expected_output: "# report"}
+
+
+def test_batch_writes_source_name_output_to_selected_directory(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    source = tmp_path / "activities" / "activity.fit"
+    output_directory = tmp_path / "reports"
+    generator = StubGenerator(events)
+    generator.markdown[source] = "# report"
+    writer = StubWriter(events)
+
+    outcomes = list(
+        GenerateMarkdownReportBatch(generator, writer).execute(
+            [source],
+            BatchOutputNaming.SOURCE_NAME,
+            output_directory=output_directory,
+        )
+    )
+
+    expected_output = output_directory / "activity.md"
+    assert [outcome.status for outcome in outcomes] == [BatchReportStatus.SUCCESS]
+    assert outcomes[0].output == expected_output
+    assert writer.contents == {expected_output: "# report"}
+
+
 def test_source_name_batch_continues_after_processing_and_write_failures(
     tmp_path: Path,
 ) -> None:

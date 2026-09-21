@@ -1,5 +1,7 @@
 ## 2026-09-17
 
+- Allowed directory inputs to use `--output` with an existing destination
+  directory, including source-name and activity-time report naming.
 - Preserved report generation across interrupted weather and elevation HTTP
   responses, classified HTTP 429 responses as quota exhaustion, and distinguished
   malformed nested provider data from legitimate missing coverage while retaining

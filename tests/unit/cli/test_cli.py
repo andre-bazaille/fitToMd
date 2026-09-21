@@ -483,35 +483,45 @@ def test_directory_run_reports_usage_through_explicit_diagnostics(
     assert stderr.getvalue().endswith("Batch Terrain requests this run: 4.\n")
 
 
-def test_run_rejects_manual_output_for_directory_input(tmp_path: Path) -> None:
+def test_run_writes_directory_reports_to_output_directory(tmp_path: Path) -> None:
+    input_directory = tmp_path / "activities"
+    input_directory.mkdir()
+    fit_file = input_directory / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    output_directory = tmp_path / "reports"
+    output_directory.mkdir()
     stdout = io.StringIO()
     stderr = io.StringIO()
     generator = StubGenerator("# report")
 
     exit_code = run(
-        argv=[str(tmp_path), "--output", str(tmp_path / "reports.md")],
+        argv=[str(input_directory), "--output", str(output_directory)],
         report_generator=generator,
         stdout=stdout,
         stderr=stderr,
     )
 
-    assert exit_code == 2
-    assert generator.calls == []
-    assert stdout.getvalue() == ""
-    assert "--output option cannot be used" in stderr.getvalue()
+    assert exit_code == 0
+    assert generator.calls == [fit_file]
+    assert (output_directory / "activity.md").read_text(encoding="utf-8") == (
+        "# report"
+    )
+    assert not (input_directory / "activity.md").exists()
+    assert stdout.getvalue() == "# report\n"
+    assert stderr.getvalue() == ""
 
 
-def test_run_rejects_configured_manual_output_for_directory_input(
+def test_run_rejects_non_directory_output_for_directory_input(
     tmp_path: Path,
 ) -> None:
-    config_file = tmp_path / ".config"
-    config_file.write_text("output = reports.md\n", encoding="utf-8")
+    output_file = tmp_path / "reports.md"
+    output_file.write_text("existing", encoding="utf-8")
     stdout = io.StringIO()
     stderr = io.StringIO()
     generator = StubGenerator("# report")
 
     exit_code = run(
-        argv=[str(tmp_path), "--config", str(config_file)],
+        argv=[str(tmp_path), "--output", str(output_file)],
         report_generator=generator,
         stdout=stdout,
         stderr=stderr,
@@ -520,7 +530,32 @@ def test_run_rejects_configured_manual_output_for_directory_input(
     assert exit_code == 2
     assert generator.calls == []
     assert stdout.getvalue() == ""
-    assert "--output option cannot be used" in stderr.getvalue()
+    assert "Output path must be an existing directory" in stderr.getvalue()
+
+
+def test_run_uses_configured_output_directory_for_directory_input(
+    tmp_path: Path,
+) -> None:
+    input_directory = tmp_path / "activities"
+    input_directory.mkdir()
+    fit_file = input_directory / "activity.fit"
+    fit_file.write_bytes(b"FIT")
+    output_directory = tmp_path / "reports"
+    output_directory.mkdir()
+    config_file = tmp_path / ".config"
+    config_file.write_text(f"output = {output_directory}\n", encoding="utf-8")
+
+    exit_code = run(
+        argv=[str(input_directory), "--config", str(config_file)],
+        report_generator=StubGenerator("# report"),
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+
+    assert exit_code == 0
+    assert (output_directory / "activity.md").read_text(encoding="utf-8") == (
+        "# report"
+    )
 
 
 def test_run_uses_activity_time_names_and_skips_existing_reports(

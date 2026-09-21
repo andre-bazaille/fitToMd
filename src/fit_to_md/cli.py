@@ -96,7 +96,10 @@ def build_parser() -> argparse.ArgumentParser:
         "-o",
         "--output",
         type=Path,
-        help="Optional output path for a single FIT file; not allowed for directory inputs.",
+        help=(
+            "Optional output file for a FIT file, or output directory for a "
+            "directory input."
+        ),
     )
     parser.add_argument(
         "--output-by-activity-time",
@@ -244,10 +247,10 @@ def run(
         return 2
 
     is_directory = input_path.is_dir()
-    if is_directory and args.output is not None:
+    if is_directory and args.output is not None and not args.output.is_dir():
         print(
-            "The --output option cannot be used when input is a directory: "
-            f"{input_path}",
+            "Output path must be an existing directory when input is a directory: "
+            f"{args.output}",
             file=stderr,
         )
         return 2
@@ -284,6 +287,7 @@ def run(
         return _run_directory(
             fit_files,
             generator,
+            output_directory=args.output,
             output_by_activity_time=args.output_by_activity_time,
             elevation_diagnostics=elevation_diagnostics,
             stdout=stdout,
@@ -355,6 +359,7 @@ def _run_directory(
     fit_files: Sequence[Path],
     generator: GenerateMarkdownReport,
     *,
+    output_directory: Path | None,
     output_by_activity_time: bool,
     elevation_diagnostics: ElevationDiagnostics | None,
     stdout: TextIO,
@@ -369,7 +374,11 @@ def _run_directory(
     failed = False
     reported_collisions: set[Path] = set()
 
-    for outcome in batch.execute(fit_files, naming):
+    for outcome in batch.execute(
+        fit_files,
+        naming,
+        output_directory=output_directory,
+    ):
         if outcome.status is BatchReportStatus.SKIPPED_EXISTING:
             continue
 
