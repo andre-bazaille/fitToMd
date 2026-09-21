@@ -230,9 +230,7 @@ def test_reporting_includes_sub_kilometer_record_output() -> None:
     assert splits[0].distance_m == pytest.approx(500.0)
     assert splits[0].time_seconds == pytest.approx(50.0)
     assert splits[0].pace_seconds_per_km == pytest.approx(100.0)
-    assert [transition.label for transition in dynamics] == [
-        "Km 0.00–0.50"
-    ]
+    assert [transition.label for transition in dynamics] == ["Km 0.00–0.50"]
 
 
 def test_reporting_includes_final_partial_segment() -> None:

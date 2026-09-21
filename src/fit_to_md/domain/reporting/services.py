@@ -222,8 +222,7 @@ class SplitBuilder:
                 and segment.end_boundary.altitude_m is not None
             ):
                 elevation_delta_m = (
-                    segment.end_boundary.altitude_m
-                    - segment.start_boundary.altitude_m
+                    segment.end_boundary.altitude_m - segment.start_boundary.altitude_m
                 )
 
             splits.append(
@@ -432,10 +431,7 @@ def _resolve_split_duration_s(
     else:
         if kilometer != len(activity.laps):
             return record_duration_s
-        if (
-            abs(lap_distance_m - segment_distance_m)
-            > _KILOMETER_ALIGNMENT_TOLERANCE_M
-        ):
+        if abs(lap_distance_m - segment_distance_m) > _KILOMETER_ALIGNMENT_TOLERANCE_M:
             return record_duration_s
 
     lap_duration_s = current_lap.total_timer_time_s
@@ -568,10 +564,7 @@ def _build_record_distance_segments(
         start_distance_m = end_distance_m
         start_boundary = end_boundary
 
-    if (
-        len(segments) == completed_kilometers
-        and total_distance_m > start_distance_m
-    ):
+    if len(segments) == completed_kilometers and total_distance_m > start_distance_m:
         segments.append(
             _DistanceSegment(
                 kilometer=len(segments) + 1,
@@ -597,8 +590,7 @@ def _format_distance_segment_label(segment: _DistanceSegment) -> str:
     if not segment.is_partial:
         return f"Km {segment.kilometer}"
     return (
-        f"Km {segment.start_distance_m / 1000:.2f}–"
-        f"{segment.end_distance_m / 1000:.2f}"
+        f"Km {segment.start_distance_m / 1000:.2f}–{segment.end_distance_m / 1000:.2f}"
     )
 
 

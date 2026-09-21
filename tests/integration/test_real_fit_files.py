@@ -158,9 +158,7 @@ def test_reader_and_application_decode_real_fit_files(
     ]
     assert distance_records[0].distance_m is not None
     assert distance_records[-1].distance_m is not None
-    record_distance_m = (
-        distance_records[-1].distance_m - distance_records[0].distance_m
-    )
+    record_distance_m = distance_records[-1].distance_m - distance_records[0].distance_m
     expected_final_distance_m = record_distance_m % 1000
     assert report.splits[-1].distance_m == pytest.approx(
         expected_final_distance_m, abs=0.1
