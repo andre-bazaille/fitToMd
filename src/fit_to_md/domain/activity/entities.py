@@ -1,6 +1,9 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from fit_to_md.domain.activity.timeline import ActiveTimeline
+from fit_to_md.domain.activity.workout import LapRole, WorkoutIssue, WorkoutStep
+
 
 @dataclass(frozen=True)
 class ActivitySession:
@@ -53,6 +56,10 @@ class ActivityLap:
     avg_temperature_c: float | None
     min_temperature_c: float | None
     max_temperature_c: float | None
+    role: LapRole = LapRole.UNKNOWN
+    label: str | None = None
+    workout_step: WorkoutStep | None = None
+    workout_issues: tuple[WorkoutIssue, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,3 +71,7 @@ class Activity:
     records: tuple[ActivityRecord, ...] = field(default_factory=tuple)
     # True when record elapsed times exclude pauses, rather than using wall time.
     has_active_record_timing: bool = False
+    active_timeline: ActiveTimeline = field(default_factory=ActiveTimeline)
+    # Complete timestamped samples, including records without usable measurements.
+    # Empty for callers that provide only the legacy filtered `records` stream.
+    record_samples: tuple[ActivityRecord, ...] = field(default_factory=tuple)

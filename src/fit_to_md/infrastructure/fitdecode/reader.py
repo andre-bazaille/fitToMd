@@ -16,6 +16,12 @@ from fit_to_md.domain.activity.ports import (
     InvalidActivityError,
     UnsupportedActivityError,
 )
+from fit_to_md.domain.activity.timeline import (
+    TimerState,
+    TimerTransition,
+    build_active_timeline,
+)
+from fit_to_md.infrastructure.fitdecode.workout import attach_workout_metadata
 
 
 @dataclass(frozen=True)
@@ -52,7 +58,12 @@ class FitdecodeActivityReader:
         session_count = 0
         laps: list[ActivityLap] = []
         records: list[ActivityRecord] = []
+        record_samples: list[ActivityRecord] = []
         timer_events: list[_TimerEvent] = []
+        lap_values: list[dict[str, object]] = []
+        step_values: list[dict[str, object]] = []
+        transitions: list[TimerTransition] = []
+        invalid_workout_events = False
         sport: str | None = None
         sub_sport: str | None = None
 
@@ -74,11 +85,37 @@ class FitdecodeActivityReader:
                     sub_sport = _coerce_text(values.get("sub_sport")) or sub_sport
                 elif frame.name == "lap":
                     laps.append(_parse_lap(frame, len(laps) + 1))
+                    lap_values.append(_extract_message_values(frame))
+                elif frame.name == "workout_step":
+                    step_values.append(_extract_message_values(frame))
                 elif frame.name == "record":
                     record = _parse_record(frame)
                     if record is not None:
-                        records.append(record)
+                        record_samples.append(record)
+                        if _has_reportable_measurement(record):
+                            records.append(record)
                 elif frame.name == "event":
+                    values = _extract_message_values(frame)
+                    if values.get("event") == "timer":
+                        timestamp = values.get("timestamp")
+                        state = values.get("event_type")
+                        if isinstance(timestamp, datetime) and isinstance(state, str):
+                            if (
+                                state
+                                in _TIMER_START_EVENT_TYPES | _TIMER_STOP_EVENT_TYPES
+                            ):
+                                transitions.append(
+                                    TimerTransition(
+                                        timestamp,
+                                        TimerState.START
+                                        if state in _TIMER_START_EVENT_TYPES
+                                        else TimerState.STOP,
+                                    )
+                                )
+                            else:
+                                invalid_workout_events = True
+                        else:
+                            invalid_workout_events = True
                     timer_event = _parse_timer_event(frame)
                     if timer_event is not None:
                         timer_events.append(timer_event)
@@ -91,13 +128,31 @@ class FitdecodeActivityReader:
             records=normalized_records,
             timer_events=tuple(timer_events),
         )
+        normalized_samples = _normalize_running_record_cadence(
+            record_samples, sport=sport
+        )
+        samples_with_elapsed, _ = _assign_elapsed_time_to_records(
+            records=normalized_samples,
+            timer_events=tuple(timer_events),
+        )
         return Activity(
             session=session,
             sport=sport,
             sub_sport=sub_sport,
-            laps=tuple(laps),
+            laps=attach_workout_metadata(
+                tuple(laps), tuple(lap_values), tuple(step_values)
+            ),
             records=records_with_elapsed,
+            record_samples=samples_with_elapsed,
             has_active_record_timing=has_active_timing,
+            active_timeline=build_active_timeline(
+                session.start_time,
+                session.end_time,
+                session.total_timer_time_s,
+                session.total_elapsed_time_s,
+                tuple(transitions),
+                invalid_events=invalid_workout_events,
+            ),
         )
 
 
@@ -165,8 +220,12 @@ def _parse_record(frame: Any) -> ActivityRecord | None:
         grade_percent=_coerce_float(values.get("grade")),
         temperature_c=_coerce_float(values.get("temperature")),
     )
-    if all(
-        value is None
+    return record
+
+
+def _has_reportable_measurement(record: ActivityRecord) -> bool:
+    return any(
+        value is not None
         for value in (
             record.distance_m,
             record.heart_rate_bpm,
@@ -176,9 +235,7 @@ def _parse_record(frame: Any) -> ActivityRecord | None:
             record.grade_percent,
             record.temperature_c,
         )
-    ):
-        return None
-    return record
+    )
 
 
 def _parse_timer_event(frame: Any) -> _TimerEvent | None:

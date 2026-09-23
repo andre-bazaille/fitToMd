@@ -320,3 +320,260 @@ def test_rejects_invalid_elevation_sample_distance(invalid_value: float) -> None
             renderer=StubRenderer(),
             elevation_sample_distance_m=invalid_value,
         )
+
+
+def test_elevation_replacement_preserves_workout_metadata_and_timeline() -> None:
+    from dataclasses import replace
+
+    from fit_to_md.domain.reporting.entities import SessionSummary
+    from fit_to_md.domain.reporting.services import SessionSummaryBuilder
+    from fit_to_md.infrastructure.fitdecode.reader import FitdecodeActivityReader
+    from tests.support.workout import workout_scenario
+
+    scenario = workout_scenario("paused")
+    original = FitdecodeActivityReader(scenario.reader_factory).read(
+        Path("synthetic.fit")
+    )
+    activity = replace(
+        original,
+        records=tuple(
+            replace(record, latitude_deg=48.0, longitude_deg=2.0)
+            for record in original.records
+        ),
+    )
+
+    class CapturingSummaryBuilder(SessionSummaryBuilder):
+        def __init__(self) -> None:
+            super().__init__()
+            self.activities: list[Activity] = []
+
+        def build(self, activity: Activity) -> SessionSummary:
+            self.activities.append(activity)
+            return super().build(activity)
+
+    builder = CapturingSummaryBuilder()
+    provider = StubElevationProvider((200.0, 220.0))
+    generator = GenerateMarkdownReport(
+        reader=StubReader(activity),
+        renderer=StubRenderer(),
+        summary_builder=builder,
+        elevation_provider=provider,
+        elevation_mode="dem",
+        elevation_sample_distance_m=5600,
+    )
+    generator.execute(Path("synthetic.fit"))
+    enriched = builder.activities[0]
+    assert len(provider.calls) == 1
+    assert enriched.records != activity.records
+    assert enriched.records[0].altitude_m == 200.0
+    assert enriched.laps == activity.laps
+    assert enriched.active_timeline == activity.active_timeline
+    assert enriched.has_active_record_timing == activity.has_active_record_timing
+    assert enriched.laps[1].workout_step is not None
+    assert len(enriched.active_timeline.intervals) == 2
+
+
+@pytest.mark.parametrize("lap_mode", (False, True))
+@pytest.mark.parametrize("with_zones", (False, True))
+def test_optional_workout_results_follow_typed_options(
+    lap_mode: bool, with_zones: bool
+) -> None:
+    from fit_to_md.application.use_cases.generate_markdown_report import (
+        ReportGenerationOptions,
+        WorkoutReportMode,
+    )
+    from fit_to_md.domain.reporting.heart_rate_zones import HeartRateZoneBoundaries
+
+    boundaries = HeartRateZoneBoundaries((130, 145, 160, 175)) if with_zones else None
+    reader = StubReader(_activity())
+    renderer = StubRenderer()
+    generator = GenerateMarkdownReport(
+        reader,
+        renderer,
+        options=ReportGenerationOptions(
+            WorkoutReportMode.LAPS if lap_mode else WorkoutReportMode.OFF,
+            boundaries,
+        ),
+    )
+
+    report, _ = generator.execute_with_report(Path("activity.fit"))
+
+    assert (report.workout is not None) is lap_mode
+    assert (report.zones is not None) is with_zones
+    assert report.summary.total_distance_km == 1.0
+    assert len(report.splits) == 1
+    assert renderer.calls == [report]
+    assert reader.calls == [Path("activity.fit")]
+    if report.workout is not None:
+        assert report.workout.laps == ()
+    if report.zones is not None:
+        assert len(report.zones.laps) == 0
+        assert report.zones.boundaries == boundaries
+
+
+def test_inspect_does_not_build_requested_workout_results() -> None:
+    from fit_to_md.application.use_cases.generate_markdown_report import (
+        ReportGenerationOptions,
+        WorkoutReportMode,
+    )
+    from fit_to_md.domain.reporting.heart_rate_zones import HeartRateZoneBoundaries
+
+    class FailingBuilder:
+        def build(self, *args, **kwargs):
+            raise AssertionError("workout calculation during inspect")
+
+    reader = StubReader(_activity())
+    generator = GenerateMarkdownReport(
+        reader,
+        StubRenderer(),
+        options=ReportGenerationOptions(
+            WorkoutReportMode.LAPS, HeartRateZoneBoundaries((130, 145, 160, 175))
+        ),
+        native_lap_builder=FailingBuilder(),
+        repetition_builder=FailingBuilder(),
+        recovery_builder=FailingBuilder(),
+        zone_builder=FailingBuilder(),
+    )
+
+    assert generator.inspect(Path("activity.fit")).start_time is not None
+    assert reader.calls == [Path("activity.fit")]
+
+
+def test_invalid_report_options_fail_before_activity_or_provider_calls() -> None:
+    from fit_to_md.application.use_cases.generate_markdown_report import (
+        ReportGenerationOptions,
+    )
+
+    reader = StubReader(_activity())
+    provider = StubElevationProvider((200.0, 220.0))
+    with pytest.raises(ValueError, match="workout_report"):
+        ReportGenerationOptions(workout_report="unknown")
+    with pytest.raises(TypeError, match="hr_zone_boundaries"):
+        ReportGenerationOptions(hr_zone_boundaries=(130, 145, 160, 175))
+    with pytest.raises(TypeError, match="options"):
+        GenerateMarkdownReport(
+            reader,
+            StubRenderer(),
+            elevation_provider=provider,
+            elevation_mode="dem",
+            options="invalid",
+        )
+    assert reader.calls == []
+    assert provider.calls == []
+
+
+def test_missing_optional_workout_data_renders_successfully() -> None:
+    from fit_to_md.application.use_cases.generate_markdown_report import (
+        ReportGenerationOptions,
+        WorkoutReportMode,
+    )
+    from fit_to_md.domain.reporting.heart_rate_zones import HeartRateZoneBoundaries
+    from fit_to_md.infrastructure.markdown.renderer import MarkdownReportRenderer
+
+    generator = GenerateMarkdownReport(
+        StubReader(Activity()),
+        MarkdownReportRenderer(),
+        options=ReportGenerationOptions(
+            WorkoutReportMode.LAPS, HeartRateZoneBoundaries((130, 145, 160, 175))
+        ),
+    )
+
+    result = generator.execute_detailed(Path("empty.fit"))
+
+    assert result.report.workout is not None
+    assert result.report.zones is not None
+    assert "## Workout Breakdown" in result.markdown
+    assert "## Heart-Rate Zones" in result.markdown
+
+
+def test_enrichment_failure_with_workout_options_stops_before_report_assembly() -> None:
+    from fit_to_md.application.use_cases.generate_markdown_report import (
+        ReportGenerationOptions,
+        WorkoutReportMode,
+    )
+    from fit_to_md.domain.reporting.heart_rate_zones import HeartRateZoneBoundaries
+
+    class FailingElevationProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def lookup(self, coordinates):
+            self.calls += 1
+            raise RuntimeError("provider failed")
+
+    provider = FailingElevationProvider()
+    reader = StubReader(_activity())
+    renderer = StubRenderer()
+    generator = GenerateMarkdownReport(
+        reader,
+        renderer,
+        elevation_provider=provider,
+        elevation_mode="dem",
+        options=ReportGenerationOptions(
+            WorkoutReportMode.LAPS, HeartRateZoneBoundaries((130, 145, 160, 175))
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        generator.execute(Path("activity.fit"))
+    assert reader.calls == [Path("activity.fit")]
+    assert provider.calls == 1
+    assert renderer.calls == []
+
+
+@pytest.mark.parametrize("lap_mode", (False, True))
+def test_lap_zone_rows_follow_workout_mode(lap_mode: bool) -> None:
+    from dataclasses import replace
+
+    from fit_to_md.application.use_cases.generate_markdown_report import (
+        ReportGenerationOptions,
+        WorkoutReportMode,
+    )
+    from fit_to_md.domain.activity import ActivityLap
+    from fit_to_md.domain.activity.timeline import (
+        ActiveInterval,
+        ActiveTimeline,
+        TimelineSource,
+    )
+    from fit_to_md.domain.reporting.heart_rate_zones import HeartRateZoneBoundaries
+
+    activity = _activity()
+    start = activity.session.start_time
+    end = activity.session.end_time
+    assert start is not None and end is not None
+    lap = ActivityLap(
+        index=0,
+        start_time=start,
+        end_time=end,
+        total_distance_m=1000.0,
+        total_timer_time_s=600.0,
+        total_ascent_m=None,
+        total_descent_m=None,
+        avg_heart_rate_bpm=None,
+        max_heart_rate_bpm=None,
+        avg_cadence_spm=None,
+        avg_temperature_c=None,
+        min_temperature_c=None,
+        max_temperature_c=None,
+    )
+    activity = replace(
+        activity,
+        laps=(lap,),
+        active_timeline=ActiveTimeline(
+            (ActiveInterval(start, end),), TimelineSource.SESSION_TOTALS, None
+        ),
+    )
+    generator = GenerateMarkdownReport(
+        StubReader(activity),
+        StubRenderer(),
+        options=ReportGenerationOptions(
+            WorkoutReportMode.LAPS if lap_mode else WorkoutReportMode.OFF,
+            HeartRateZoneBoundaries((130, 145, 160, 175)),
+        ),
+    )
+
+    report, _ = generator.execute_with_report(Path("activity.fit"))
+
+    assert report.zones is not None
+    assert len(report.zones.laps) == (1 if lap_mode else 0)
+    assert (report.workout is not None) is lap_mode

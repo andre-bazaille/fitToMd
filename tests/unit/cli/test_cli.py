@@ -894,6 +894,7 @@ def test_run_passes_transition_options_to_default_generator(
         dem_sample_distance: float = 25.0,
         opentopodata_dataset: str = "eudem25m",
         opentopodata_base_url: str = "https://api.opentopodata.org",
+        report_options: cli.ReportGenerationOptions | None = None,
     ) -> cli._DefaultRuntime:
         calls.append(
             (

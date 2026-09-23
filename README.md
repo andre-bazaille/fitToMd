@@ -13,6 +13,7 @@ The generated report includes:
 - one-kilometer splits plus the final partial-distance segment;
 - configurable heart-rate, pace or speed, and grade samples for every segment;
 - pause-aware timing derived from FIT timer events;
+- optional native-lap workout breakdown, repetition/recovery analysis, and configured heart-rate zones;
 - optional historical weather from Open-Meteo; and
 - optional terrain elevation from OpenTopoData.
 
@@ -100,6 +101,76 @@ output. A failed file does not stop the remaining files; the command returns exi
 code `1` after the batch completes. For compatibility, directory processing also
 recognizes and skips reports created with the former `YYYY-MM-DD HH:MM.md` naming
 convention.
+
+## Workout-aware reports
+
+The default report keeps its existing session, kilometer-split, and dynamics
+sections. Enable native laps, repetition consistency, and recovery HR changes
+for a FIT workout:
+
+```bash
+fit-to-md intervals.fit --workout-report laps
+```
+
+Set your own four strictly increasing heart-rate thresholds in bpm to add five
+zones. Zones can be enabled alone or alongside the workout sections:
+
+```bash
+fit-to-md intervals.fit --workout-report laps \
+  --hr-zone-boundaries 130,145,160,175
+fit-to-md activity.fit --hr-zone-boundaries 130,145,160,175
+```
+
+The thresholds define Z1 below 130, Z2 from 130 to below 145, Z3 from 145 to
+below 160, Z4 from 160 to below 175, and Z5 at or above 175 bpm. A heart-rate
+sample exactly on a threshold enters the higher zone. Zone percentages use only
+time with valid HR coverage; the report separately shows covered and unknown
+active time. Each HR sample covers at most five wall-clock seconds and never
+fills a pause or a missing-HR gap. With lap mode enabled, the report also shows
+per-lap zone durations. Without boundaries, no zones are estimated.
+
+Workout roles and labels come from recorded lap intensity or an explicit,
+unambiguous lap-to-workout-step link. Ordinary auto-laps and unlabeled laps stay
+visible with unknown roles. Repetition statistics compare only work laps with
+compatible linked definitions; each effort has equal weight, and CV uses
+population standard deviation. Recovery change is the signed difference between
+HR at recovery start and after 60 active seconds, using observations within five
+wall-clock seconds of each target. It is not a clinical recovery score.
+
+Native FIT lap totals remain usable when records are absent. Record-derived
+metrics and HR coverage may be unavailable when activity timing, lap boundaries,
+or samples are insufficient. The Markdown explains these limits in place. Missing
+optional workout data does not make conversion fail. The new options do not use
+weather, elevation, or any new external service.
+
+The same flags work with directory input:
+
+```bash
+fit-to-md activities/ --output fresh-workout-reports/ \
+  --workout-report laps --hr-zone-boundaries 130,145,160,175
+```
+
+Create `fresh-workout-reports/` first. Directory conversion skips an existing
+report even if the workout or zone options changed, so use a fresh output
+directory when regenerating reports with new settings.
+
+Selected lines from the synthetic six-effort acceptance report (other lap and
+zone rows omitted):
+
+```markdown
+## Workout Breakdown
+| 2 | 400 m effort | work | 0.40 km | 1:40 | 4:10/km | 160 | 170 | 170 |
+| 3 | Recovery | recovery | 0.20 km | 2:00 | 10:00/km | 140 | 170 | 170 |
+
+## Repetition Consistency
+| Step 1 | 400 m; open target | 6 | 4:10/km | 4:10/km | 4:10/km | 0.0% | 0 |
+
+## Recovery Heart-Rate Changes
+| 3 | 2 | 170 bpm | 140 bpm | -30 bpm | +0.0 s | +0.0 s | - |
+
+## Heart-Rate Zones
+**Session HR coverage:** 26:00 covered / 26:00 active (100.0%); unknown active time 0:00.
+```
 
 ## Example output
 
@@ -358,6 +429,8 @@ elevation-source = hybrid
 dem-sample-distance = 30
 elevation-smoothing-distance = 200
 elevation-min-change = 0.6
+workout-report = laps
+hr-zone-boundaries = 130,145,160,175
 ```
 
 ```bash
@@ -368,7 +441,10 @@ An option supplied directly on the command line overrides the same option in the
 file. Configurable options are `output`, `output-by-activity-time`,
 `dynamics-step-size`, `weather-mode`,
 `elevation-smoothing-distance`, `elevation-min-change`, `elevation-source`,
-`dem-sample-distance`, `opentopodata-dataset`, and `opentopodata-base-url`.
+`dem-sample-distance`, `opentopodata-dataset`, `opentopodata-base-url`,
+`workout-report`, and `hr-zone-boundaries`. `workout-report` defaults to `off`;
+explicit `--workout-report off` overrides `workout-report = laps` in a config file.
+Invalid modes or zone lists return exit code `2` before reading any FIT activity.
 
 ## Privacy and public FIT fixtures
 

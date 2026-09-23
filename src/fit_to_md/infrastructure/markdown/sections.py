@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from fit_to_md.domain.reporting.entities import (
     FitReport,
@@ -15,6 +15,13 @@ class ReportSectionRenderer(Protocol):
     heading: str
 
     def render_lines(self, report: FitReport) -> Sequence[str]: ...
+
+
+@runtime_checkable
+class ConditionalReportSectionRenderer(Protocol):
+    """Optional eligibility hook; legacy custom sections remain unconditional."""
+
+    def is_enabled(self, report: FitReport) -> bool: ...
 
 
 class SessionSummarySectionRenderer:

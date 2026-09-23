@@ -1,20 +1,66 @@
 from fit_to_md.domain.reporting.elevation import ElevationEnricher
 from fit_to_md.domain.reporting.entities import (
     FitReport,
+    HeartRateZoneReport,
+    LapZoneMeasurement,
+    MeasurementCoverage,
+    MeasurementIssue,
+    MeasurementReason,
+    NativeLapRow,
+    RecoveryAnalysis,
+    RecoveryChange,
+    RecoveryReason,
+    RepetitionAnalysis,
+    RepetitionExclusion,
+    RepetitionGroup,
+    RepetitionMetric,
+    RepetitionReason,
     SessionSummary,
     Split,
     TransitionDynamics,
     TransitionSample,
+    WorkoutReport,
+    ZoneMeasurement,
 )
+from fit_to_md.domain.reporting.heart_rate_zones import (
+    HeartRateZoneBoundaries,
+    HeartRateZoneBuilder,
+    summarize_zone_spans,
+)
+from fit_to_md.domain.reporting.recovery import RecoveryAnalysisBuilder
+from fit_to_md.domain.reporting.repetitions import RepetitionAnalysisBuilder
 from fit_to_md.domain.reporting.services import (
     SessionSummaryBuilder,
     SplitBuilder,
     TransitionBuilder,
     resolve_activity_start_time,
 )
+from fit_to_md.domain.reporting.workout import NativeLapReportBuilder
 
 __all__ = [
     "FitReport",
+    "HeartRateZoneBoundaries",
+    "HeartRateZoneBuilder",
+    "HeartRateZoneReport",
+    "LapZoneMeasurement",
+    "ZoneMeasurement",
+    "WorkoutReport",
+    "summarize_zone_spans",
+    "MeasurementCoverage",
+    "MeasurementIssue",
+    "MeasurementReason",
+    "NativeLapRow",
+    "NativeLapReportBuilder",
+    "RecoveryAnalysis",
+    "RecoveryAnalysisBuilder",
+    "RecoveryChange",
+    "RecoveryReason",
+    "RepetitionAnalysis",
+    "RepetitionAnalysisBuilder",
+    "RepetitionExclusion",
+    "RepetitionGroup",
+    "RepetitionMetric",
+    "RepetitionReason",
     "ElevationEnricher",
     "SessionSummary",
     "SessionSummaryBuilder",

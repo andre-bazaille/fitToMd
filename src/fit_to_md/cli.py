@@ -1,5 +1,6 @@
 import argparse
 import math
+import re
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from typing import TextIO
 
 from fit_to_md.application.use_cases.generate_markdown_report import (
     GenerateMarkdownReport,
+    ReportGenerationOptions,
+    WorkoutReportMode,
 )
 from fit_to_md.application.use_cases.generate_markdown_report_batch import (
     ActivityTimeUnavailableError,
@@ -21,6 +24,7 @@ from fit_to_md.domain.activity.ports import (
     InvalidActivityError,
     UnsupportedActivityError,
 )
+from fit_to_md.domain.reporting.heart_rate_zones import HeartRateZoneBoundaries
 from fit_to_md.domain.reporting.ports import (
     ElevationDiagnostics,
     ProviderDiagnostic,
@@ -44,6 +48,8 @@ CONFIGURABLE_OPTIONS = (
     "dem-sample-distance",
     "opentopodata-dataset",
     "opentopodata-base-url",
+    "workout-report",
+    "hr-zone-boundaries",
 )
 _BOOLEAN_CONFIG_OPTIONS = frozenset(("output-by-activity-time",))
 _TRUE_CONFIG_VALUES = frozenset(("1", "true", "yes", "on"))
@@ -75,6 +81,24 @@ def _non_negative_float(value: str) -> float:
     if not math.isfinite(parsed) or parsed < 0:
         raise argparse.ArgumentTypeError("value must be a finite non-negative number")
     return parsed
+
+
+def _hr_zone_boundaries(value: str) -> HeartRateZoneBoundaries:
+    parts = value.split(",")
+    if len(parts) != 4:
+        raise argparse.ArgumentTypeError(
+            "HR zone boundaries must be four comma-separated positive integers"
+        )
+    if any(re.fullmatch(r"[0-9]+", part.strip()) is None for part in parts):
+        raise argparse.ArgumentTypeError(
+            "HR zone boundaries must be four comma-separated positive integers"
+        )
+    try:
+        return HeartRateZoneBoundaries(
+            (int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
+        )
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -155,6 +179,17 @@ def build_parser() -> argparse.ArgumentParser:
         default="https://api.opentopodata.org",
         help="OpenTopoData base URL, useful for self-hosted instances.",
     )
+    parser.add_argument(
+        "--workout-report",
+        choices=tuple(mode.value for mode in WorkoutReportMode),
+        default=WorkoutReportMode.OFF.value,
+        help="Add native lap, repetition, and recovery sections when set to laps.",
+    )
+    parser.add_argument(
+        "--hr-zone-boundaries",
+        type=_hr_zone_boundaries,
+        help="Four increasing comma-separated heart-rate thresholds in bpm.",
+    )
     return parser
 
 
@@ -167,6 +202,7 @@ def build_default_generator(
     dem_sample_distance: float = 25.0,
     opentopodata_dataset: str = "eudem25m",
     opentopodata_base_url: str = "https://api.opentopodata.org",
+    report_options: ReportGenerationOptions | None = None,
 ) -> GenerateMarkdownReport:
     return _build_default_runtime(
         dynamics_step_size=dynamics_step_size,
@@ -177,6 +213,7 @@ def build_default_generator(
         dem_sample_distance=dem_sample_distance,
         opentopodata_dataset=opentopodata_dataset,
         opentopodata_base_url=opentopodata_base_url,
+        report_options=report_options,
     ).generator
 
 
@@ -189,6 +226,7 @@ def _build_default_runtime(
     dem_sample_distance: float = 25.0,
     opentopodata_dataset: str = "eudem25m",
     opentopodata_base_url: str = "https://api.opentopodata.org",
+    report_options: ReportGenerationOptions | None = None,
 ) -> _DefaultRuntime:
     weather_provider = (
         OpenMeteoHistoricalWeatherProvider() if weather_mode == "auto" else None
@@ -217,6 +255,7 @@ def _build_default_runtime(
         elevation_provider=elevation_provider,
         elevation_mode=elevation_source,
         elevation_sample_distance_m=dem_sample_distance,
+        options=report_options,
     )
     return _DefaultRuntime(
         generator=generator,
@@ -234,6 +273,10 @@ def run(
     parser = build_parser()
     command_line = list(argv) if argv is not None else sys.argv[1:]
     args = parser.parse_args(_arguments_with_config_defaults(parser, command_line))
+    report_options = ReportGenerationOptions(
+        workout_report=WorkoutReportMode(args.workout_report),
+        hr_zone_boundaries=args.hr_zone_boundaries,
+    )
 
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
@@ -275,6 +318,7 @@ def run(
             dem_sample_distance=args.dem_sample_distance,
             opentopodata_dataset=args.opentopodata_dataset,
             opentopodata_base_url=args.opentopodata_base_url,
+            report_options=report_options,
         )
         generator = runtime.generator
         if elevation_diagnostics is None:

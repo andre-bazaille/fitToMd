@@ -46,3 +46,20 @@ def test_load_option_file_reports_an_unreadable_file(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigFileError, match="unable to read configuration file"):
         load_option_file(missing_file, allowed_options=())
+
+
+def test_load_option_file_accepts_workout_options_with_normalized_keys(
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / "workout.conf"
+    config_file.write_text(
+        "workout_report = laps\nhr-zone-boundaries = 130,145,160,175\n",
+        encoding="utf-8",
+    )
+
+    assert load_option_file(
+        config_file, allowed_options=("workout-report", "hr-zone-boundaries")
+    ) == {
+        "workout-report": "laps",
+        "hr-zone-boundaries": "130,145,160,175",
+    }

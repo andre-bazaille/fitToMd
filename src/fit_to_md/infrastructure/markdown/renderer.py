@@ -3,10 +3,19 @@ from datetime import datetime
 
 from fit_to_md.domain.reporting.entities import FitReport
 from fit_to_md.infrastructure.markdown.sections import (
+    ConditionalReportSectionRenderer,
     ReportSectionRenderer,
     SessionSummarySectionRenderer,
     SplitSectionRenderer,
     TransitionSectionRenderer,
+)
+from fit_to_md.infrastructure.markdown.workout_sections import (
+    RecoveryChangesSectionRenderer,
+    RepetitionConsistencySectionRenderer,
+    WorkoutBreakdownSectionRenderer,
+)
+from fit_to_md.infrastructure.markdown.zone_sections import (
+    HeartRateZonesSectionRenderer,
 )
 
 
@@ -20,12 +29,22 @@ class MarkdownReportRenderer:
                 SessionSummarySectionRenderer(),
                 SplitSectionRenderer(),
                 TransitionSectionRenderer(),
+                WorkoutBreakdownSectionRenderer(),
+                RepetitionConsistencySectionRenderer(),
+                RecoveryChangesSectionRenderer(),
+                HeartRateZonesSectionRenderer(),
             )
         )
 
     def render(self, report: FitReport) -> str:
         lines = [self._render_title(report)]
         for section_renderer in self._section_renderers:
+            if (
+                isinstance(section_renderer, ConditionalReportSectionRenderer)
+                and callable(section_renderer.is_enabled)
+                and not section_renderer.is_enabled(report)
+            ):
+                continue
             lines.append("")
             lines.append(f"## {section_renderer.heading}")
             lines.extend(section_renderer.render_lines(report))

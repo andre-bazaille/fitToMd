@@ -27,6 +27,7 @@ fit-sanitize = "fit_to_md.sanitize_cli:main"
 [tool.pytest.ini_options]
 addopts = "--cov=fit_to_md --cov-branch --cov-report=term-missing --cov-fail-under=80"
 testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.coverage.run]
 branch = true

@@ -1,3 +1,19 @@
+## 2026-09-23
+
+- Added opt-in workout-aware reports with native laps, explicitly linked
+  repetitions, recovery heart-rate changes, and configurable five-zone heart-rate
+  coverage. New CLI and config options work for single files and directories;
+  default reports remain unchanged.
+- Preserved missing FIT sample boundaries in workout coverage and fixed plain
+  `pytest` test collection. Synthetic binary FIT acceptance tests and the full
+  CI suite pass (558 tests).
+
+## 2026-09-22
+
+- Added normalized FIT workout metadata and active-time evidence, with
+  conservative handling of missing or ambiguous lap-to-step links. Documented
+  the feature plan and specification and established regression fixtures.
+
 ## 2026-09-21
 
 - Included the final partial-distance segment in kilometric splits and heart-rate

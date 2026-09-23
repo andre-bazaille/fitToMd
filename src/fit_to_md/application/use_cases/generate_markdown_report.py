@@ -1,24 +1,51 @@
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from enum import StrEnum
 from math import isfinite
 from pathlib import Path
 
 from fit_to_md.domain.activity.entities import Activity
 from fit_to_md.domain.activity.ports import ActivityReader
 from fit_to_md.domain.reporting.elevation import ElevationEnricher
-from fit_to_md.domain.reporting.entities import FitReport, SessionSummary
+from fit_to_md.domain.reporting.entities import FitReport, SessionSummary, WorkoutReport
+from fit_to_md.domain.reporting.heart_rate_zones import (
+    HeartRateZoneBoundaries,
+    HeartRateZoneBuilder,
+)
 from fit_to_md.domain.reporting.ports import (
     ElevationProvider,
     HistoricalWeatherProvider,
     ProviderDiagnostic,
     ReportRenderer,
 )
+from fit_to_md.domain.reporting.recovery import RecoveryAnalysisBuilder
+from fit_to_md.domain.reporting.repetitions import RepetitionAnalysisBuilder
 from fit_to_md.domain.reporting.services import (
     SessionSummaryBuilder,
     SplitBuilder,
     TransitionBuilder,
     resolve_activity_start_time,
 )
+from fit_to_md.domain.reporting.workout import NativeLapReportBuilder
+
+
+class WorkoutReportMode(StrEnum):
+    OFF = "off"
+    LAPS = "laps"
+
+
+@dataclass(frozen=True)
+class ReportGenerationOptions:
+    workout_report: WorkoutReportMode = WorkoutReportMode.OFF
+    hr_zone_boundaries: HeartRateZoneBoundaries | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.workout_report, WorkoutReportMode):
+            raise ValueError("workout_report must be off or laps")
+        if self.hr_zone_boundaries is not None and not isinstance(
+            self.hr_zone_boundaries, HeartRateZoneBoundaries
+        ):
+            raise TypeError("hr_zone_boundaries must be HeartRateZoneBoundaries")
 
 
 @dataclass(frozen=True)
@@ -45,6 +72,11 @@ class GenerateMarkdownReport:
         elevation_provider: ElevationProvider | None = None,
         elevation_mode: str = "fit",
         elevation_sample_distance_m: float = 30.0,
+        options: ReportGenerationOptions | None = None,
+        native_lap_builder: NativeLapReportBuilder | None = None,
+        repetition_builder: RepetitionAnalysisBuilder | None = None,
+        recovery_builder: RecoveryAnalysisBuilder | None = None,
+        zone_builder: HeartRateZoneBuilder | None = None,
     ) -> None:
         if elevation_mode not in {"fit", "dem", "hybrid"}:
             raise ValueError("elevation_mode must be one of: fit, dem, hybrid")
@@ -53,6 +85,16 @@ class GenerateMarkdownReport:
             or elevation_sample_distance_m <= 0
         ):
             raise ValueError("elevation_sample_distance_m must be finite and positive")
+
+        if options is not None and not isinstance(options, ReportGenerationOptions):
+            raise TypeError("options must be ReportGenerationOptions")
+        self._options = options or ReportGenerationOptions()
+        self._native_lap_builder = native_lap_builder or NativeLapReportBuilder()
+        self._repetition_builder = repetition_builder or RepetitionAnalysisBuilder()
+        self._recovery_builder = recovery_builder or RecoveryAnalysisBuilder()
+        self._zone_builder = zone_builder
+        if self._options.hr_zone_boundaries is not None and self._zone_builder is None:
+            self._zone_builder = HeartRateZoneBuilder(self._options.hr_zone_boundaries)
 
         self._reader = reader
         self._renderer = renderer
@@ -94,6 +136,24 @@ class GenerateMarkdownReport:
                 prefer_records=elevation_was_enriched,
             ),
             transitions=self._transition_builder.build(activity),
+            workout=(
+                WorkoutReport(
+                    laps=self._native_lap_builder.build(activity),
+                    repetitions=self._repetition_builder.build(activity),
+                    recoveries=self._recovery_builder.build(activity),
+                )
+                if self._options.workout_report is WorkoutReportMode.LAPS
+                else None
+            ),
+            zones=(
+                self._zone_builder.build(
+                    activity,
+                    include_laps=self._options.workout_report is WorkoutReportMode.LAPS,
+                )
+                if self._zone_builder is not None
+                and self._options.hr_zone_boundaries is not None
+                else None
+            ),
         )
         return GeneratedMarkdownReport(
             report=report,
