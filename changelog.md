@@ -1,5 +1,6 @@
 ## 2026-09-24
 
+- Added weekly Dependabot checks for Python dependencies and GitHub Actions.
 - Licensed the project under the MIT License and declared the license in package metadata.
 - Accepted timer-derived active intervals when a FIT session is saved after its
   timer stops, restoring session and per-lap heart-rate zone durations while
