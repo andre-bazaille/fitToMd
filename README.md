@@ -518,3 +518,7 @@ The checks include Ruff linting and formatting, strict mypy validation, and
 pytest with statement and branch coverage. Coverage must remain at or above 80%.
 Behavior changes require unit tests, and external services must be tested with
 fakes rather than live network calls.
+
+## License
+
+fitToMd is licensed under the MIT License. See [LICENSE](LICENSE).
