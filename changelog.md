@@ -1,3 +1,9 @@
+## 2026-09-24
+
+- Accepted timer-derived active intervals when a FIT session is saved after its
+  timer stops, restoring session and per-lap heart-rate zone durations while
+  retaining checks for inconsistent timer and elapsed totals.
+
 ## 2026-09-23
 
 - Added opt-in workout-aware reports with native laps, explicitly linked

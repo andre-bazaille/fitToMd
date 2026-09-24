@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -10,8 +11,12 @@ from fit_to_md.domain.activity.workout import (
     TargetKind,
     WorkoutIssue,
 )
+from fit_to_md.domain.reporting.heart_rate_zones import (
+    HeartRateZoneBoundaries,
+    HeartRateZoneBuilder,
+)
 from fit_to_md.infrastructure.fitdecode.reader import FitdecodeActivityReader
-from tests.support.workout import FakeFrame, WorkoutScenario, workout_scenario
+from tests.support.workout import START, FakeFrame, WorkoutScenario, workout_scenario
 
 
 def read(scenario: WorkoutScenario):
@@ -214,6 +219,23 @@ def test_reader_exposes_timing_evidence(variant, source) -> None:
     if variant == "paused":
         assert len(activity.active_timeline.intervals) == 2
         assert activity.records[-1].elapsed_time_s == 1560
+
+
+def test_reader_measures_session_and_lap_zones_with_delayed_session_end() -> None:
+    scenario = workout_scenario("unlabeled")
+    session = next(frame for frame in scenario.frames if frame.name == "session")
+    session.values["timestamp"] = START + timedelta(hours=3)
+
+    activity = read(scenario)
+    zones = HeartRateZoneBuilder(HeartRateZoneBoundaries((130, 145, 160, 175))).build(
+        activity
+    )
+
+    assert activity.active_timeline.source == TimelineSource.TIMER_EVENTS
+    assert zones.session.coverage.covered_seconds == 1560
+    assert zones.session.zone_seconds is not None
+    assert len(zones.laps) == 14
+    assert all(lap.measurement.zone_seconds is not None for lap in zones.laps)
 
 
 @pytest.mark.parametrize(

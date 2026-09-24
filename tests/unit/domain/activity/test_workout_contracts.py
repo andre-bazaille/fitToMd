@@ -181,6 +181,29 @@ def test_closed_events_reject_inconsistent_present_totals() -> None:
     assert not timeline(events, elapsed=float("nan")).is_known
 
 
+def test_closed_events_allow_session_to_end_long_after_timer_stops() -> None:
+    result = build_active_timeline(
+        START,
+        START + timedelta(hours=3),
+        100,
+        100,
+        (event(0, TimerState.START), event(100, TimerState.STOP)),
+    )
+    assert result.source == TimelineSource.TIMER_EVENTS
+    assert result.intervals == (ActiveInterval(START, START + timedelta(seconds=100)),)
+
+
+def test_closed_events_still_reject_elapsed_time_outside_plausible_bounds() -> None:
+    events = (event(0, TimerState.START), event(100, TimerState.STOP))
+    end = START + timedelta(hours=3)
+    assert build_active_timeline(START, end, 100, 90, events).issue == (
+        TimelineIssue.INCONSISTENT_TOTALS
+    )
+    assert build_active_timeline(START, end, 100, 10_802, events).issue == (
+        TimelineIssue.INCONSISTENT_TOTALS
+    )
+
+
 def test_missing_reversed_and_mixed_timezone_bounds_are_unknown() -> None:
     assert not build_active_timeline(None, START, 0, 0, ()).is_known
     assert not build_active_timeline(

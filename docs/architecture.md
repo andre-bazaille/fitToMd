@@ -63,7 +63,10 @@ mappings, unsupported targets, and installed-profile limitations.
 `ActiveTimeline` contains ordered, nonoverlapping half-open active intervals and
 an evidence source (`timer_events`, `session_totals`, or `unknown`). An unknown
 timeline has a typed issue and no intervals; it is distinct from a known empty
-timeline. Timer events must agree with session bounds and totals. Without events,
+timeline. Timer events must fall within session bounds, and their active durations
+must agree with timer totals. Session elapsed time may end with the timer or
+include a later idle period before the session is saved; it must be at least the
+active duration and no longer than the session's wall-clock bounds. Without events,
 matching elapsed and timer totals can establish a continuous interval only when
 bounds also agree. A pause with an unknown location cannot be assigned to a lap.
 Coverage calculations intersect samples with active intervals, cap each sample

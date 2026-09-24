@@ -149,6 +149,12 @@ def build_active_timeline(
         if not _valid_total(timer_seconds) or abs(active_seconds - timer_seconds) > 1:
             return unknown(TimelineIssue.INCONSISTENT_TOTALS)
     if elapsed_seconds is not None:
-        if not _valid_total(elapsed_seconds) or abs(wall_seconds - elapsed_seconds) > 1:
+        # A closed timer can stop long before the session is finally saved.
+        # Elapsed time may end with the timer or include the later idle period.
+        if (
+            not _valid_total(elapsed_seconds)
+            or elapsed_seconds < active_seconds - 1
+            or elapsed_seconds > wall_seconds + 1
+        ):
             return unknown(TimelineIssue.INCONSISTENT_TOTALS)
     return ActiveTimeline(tuple(intervals_list), TimelineSource.TIMER_EVENTS, None)
