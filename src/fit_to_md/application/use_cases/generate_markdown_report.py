@@ -127,7 +127,9 @@ class GenerateMarkdownReport:
             parsed_activity
         )
         elevation_was_enriched = activity is not parsed_activity
-        summary = self._summary_builder.build(activity)
+        summary = self._summary_builder.build(
+            activity, prefer_records=elevation_was_enriched
+        )
         summary, weather_diagnostics = self._enrich_summary_weather(summary, activity)
         report = FitReport(
             summary=summary,

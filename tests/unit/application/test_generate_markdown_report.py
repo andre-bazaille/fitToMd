@@ -347,9 +347,11 @@ def test_elevation_replacement_preserves_workout_metadata_and_timeline() -> None
             super().__init__()
             self.activities: list[Activity] = []
 
-        def build(self, activity: Activity) -> SessionSummary:
+        def build(
+            self, activity: Activity, *, prefer_records: bool = False
+        ) -> SessionSummary:
             self.activities.append(activity)
-            return super().build(activity)
+            return super().build(activity, prefer_records=prefer_records)
 
     builder = CapturingSummaryBuilder()
     provider = StubElevationProvider((200.0, 220.0))
@@ -577,3 +579,36 @@ def test_lap_zone_rows_follow_workout_mode(lap_mode: bool) -> None:
     assert report.zones is not None
     assert len(report.zones.laps) == (1 if lap_mode else 0)
     assert (report.workout is not None) is lap_mode
+
+
+@pytest.mark.parametrize(
+    ("mode", "elevations", "expected"),
+    [
+        ("fit", (200.0, 220.0), (61.0, 56.0)),
+        ("dem", (200.0, 220.0), (20.0, 0.0)),
+        ("dem", (None, None), (61.0, 56.0)),
+        ("hybrid", (100.0, 110.0), (61.0, 56.0)),
+    ],
+)
+def test_report_preserves_watch_totals_unless_altitudes_are_replaced(
+    mode: str,
+    elevations: tuple[float | None, ...],
+    expected: tuple[float, float],
+) -> None:
+    from dataclasses import replace
+
+    activity = _activity()
+    activity = replace(
+        activity,
+        session=replace(activity.session, total_ascent_m=61.0, total_descent_m=56.0),
+    )
+    generator = GenerateMarkdownReport(
+        reader=StubReader(activity),
+        renderer=StubRenderer(),
+        elevation_mode=mode,
+        elevation_provider=StubElevationProvider(elevations),
+        elevation_sample_distance_m=1000.0,
+    )
+    report, _ = generator.execute_with_report(Path("activity.fit"))
+
+    assert (report.summary.total_ascent_m, report.summary.total_descent_m) == expected

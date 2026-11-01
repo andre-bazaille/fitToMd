@@ -232,8 +232,9 @@ Elevation processing has two separate stages:
 
 1. **Choose the altitude source.** Keep altitude recorded in the FIT file, or
    replace it with terrain elevations queried along the GPS route.
-2. **Filter the selected altitude trace.** Smooth short fluctuations and apply a
-   minimum-change threshold before accumulating session ascent and descent.
+2. **Resolve gain/loss totals.** Preserve FIT session totals (or lap totals)
+   when using the original altitude trace. When totals are missing or terrain
+   elevations replace the trace, calculate gain/loss from filtered altitudes.
 
 "Route smoothing" here means smoothing the altitude profile along traveled
 distance. It does **not** alter, simplify, or snap the recorded GPS itinerary.
@@ -242,7 +243,7 @@ distance. It does **not** alter, simplify, or snap the recorded GPS itinerary.
 
 | Mode | Network use | Behavior |
 |---|---:|---|
-| `fit` (default) | None | Uses the altitude stored in the FIT records. |
+| `fit` (default) | None | Uses FIT altitude and preserves session gain/loss totals, falling back to lap totals and then filtered records. |
 | `dem` | OpenTopoData | Replaces available record altitudes with terrain elevations. |
 | `hybrid` | OpenTopoData | Queries terrain elevation, but replaces FIT altitude only when the FIT trace is clearly noisy. |
 
@@ -345,8 +346,10 @@ it does not track usage across separate CLI runs.
 
 ### Elevation gain/loss smoothing
 
-After the source is selected, session gain and loss are calculated from record
-altitudes instead of trusting FIT session totals:
+With the original FIT altitude trace, gain and loss each use the session total,
+then the sum of available lap totals. Missing totals are calculated from record
+altitudes. When DEM enrichment changes the trace, record calculations take
+priority over FIT totals:
 
 1. A centered moving average smooths the altitude samples. Its odd-sized window
    approximates `--elevation-smoothing-distance` along the route (default:
@@ -354,10 +357,11 @@ altitudes instead of trusting FIT session totals:
 2. Starting at the first smoothed altitude, a rise or fall is accumulated only
    when it reaches `--elevation-min-change` from the last accepted altitude
    (default: `0.4` m).
-3. If fewer than two record altitudes are available, the report falls back to
-   session totals and then lap totals.
+3. If fewer than two record altitudes are available, only the available FIT
+   session or lap totals can be used.
 
-The two smoothing options affect the session gain/loss totals. Split elevation
+The two smoothing options affect gain/loss totals calculated from records; they
+do not change preserved FIT totals. Split elevation
 is the net altitude difference across each kilometer. Dynamics use the native
 FIT grade when available; after DEM replacement, grade is estimated over a
 smoothed 200 m altitude span.

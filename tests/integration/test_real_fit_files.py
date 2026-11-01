@@ -25,8 +25,8 @@ FIT_EXPECTATIONS = {
         "max_hr": 150,
         "avg_cad": 160,
         "avg_speed_kmh": 11.728150527465719,
-        "ascent_m": 171.5,
-        "descent_m": 158.8,
+        "ascent_m": 283.0,
+        "descent_m": 271.0,
         "splits": 12,
         "transitions": 12,
     },
@@ -38,8 +38,8 @@ FIT_EXPECTATIONS = {
         "max_hr": 151,
         "avg_cad": 159,
         "avg_speed_kmh": 11.34501820918983,
-        "ascent_m": 192.7,
-        "descent_m": 188.5,
+        "ascent_m": 346.0,
+        "descent_m": 343.0,
         "splits": 13,
         "transitions": 13,
     },
@@ -51,8 +51,8 @@ FIT_EXPECTATIONS = {
         "max_hr": 167,
         "avg_cad": 162,
         "avg_speed_kmh": 11.90076293379808,
-        "ascent_m": 303.4,
-        "descent_m": 404.8,
+        "ascent_m": 470.0,
+        "descent_m": 554.0,
         "splits": 9,
         "transitions": 9,
     },
@@ -64,8 +64,8 @@ FIT_EXPECTATIONS = {
         "max_hr": 153,
         "avg_cad": 158,
         "avg_speed_kmh": 11.230683327417252,
-        "ascent_m": 188.96862745098048,
-        "descent_m": 187.87968514328816,
+        "ascent_m": 351.0,
+        "descent_m": 366.0,
         "splits": 15,
         "transitions": 15,
     },
@@ -83,9 +83,11 @@ class _CapturingSessionSummaryBuilder(SessionSummaryBuilder):
         super().__init__()
         self.activity: Activity | None = None
 
-    def build(self, activity: Activity) -> SessionSummary:
+    def build(
+        self, activity: Activity, *, prefer_records: bool = False
+    ) -> SessionSummary:
         self.activity = activity
-        return super().build(activity)
+        return super().build(activity, prefer_records=prefer_records)
 
 
 class _CachedActivityReader:

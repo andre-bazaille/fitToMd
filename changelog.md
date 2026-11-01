@@ -1,3 +1,9 @@
+## 2026-11-01
+
+- Preserved FIT session ascent/descent totals, with lap and filtered-record
+  fallbacks, instead of overriding watch totals with smoothed altitude. DEM
+  replacement still recalculates totals from the enriched profile.
+
 ## 2026-09-24
 
 - Added weekly Dependabot checks for Python dependencies and GitHub Actions.

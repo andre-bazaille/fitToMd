@@ -70,7 +70,9 @@ class SessionSummaryBuilder:
         self._elevation_smoothing_distance_m = elevation_smoothing_distance_m
         self._min_elevation_change_m = min_elevation_change_m
 
-    def build(self, activity: Activity) -> SessionSummary:
+    def build(
+        self, activity: Activity, *, prefer_records: bool = False
+    ) -> SessionSummary:
         session = activity.session
         start_time = resolve_activity_start_time(activity)
 
@@ -149,6 +151,7 @@ class SessionSummaryBuilder:
             activity,
             elevation_smoothing_distance_m=self._elevation_smoothing_distance_m,
             min_elevation_change_m=self._min_elevation_change_m,
+            prefer_records=prefer_records,
         )
 
         return SessionSummary(
@@ -641,13 +644,14 @@ def _resolve_elevation_totals(
     activity: Activity,
     elevation_smoothing_distance_m: float,
     min_elevation_change_m: float,
+    prefer_records: bool,
 ) -> tuple[float | None, float | None]:
     derived_totals = _derive_elevation_totals(
         activity.records,
         elevation_smoothing_distance_m=elevation_smoothing_distance_m,
         min_elevation_change_m=min_elevation_change_m,
     )
-    if derived_totals is not None:
+    if prefer_records and derived_totals is not None:
         return derived_totals
 
     total_ascent_m = activity.session.total_ascent_m
@@ -657,6 +661,12 @@ def _resolve_elevation_totals(
     total_descent_m = activity.session.total_descent_m
     if total_descent_m is None:
         total_descent_m = _sum_optional(lap.total_descent_m for lap in activity.laps)
+
+    if derived_totals is not None:
+        if total_ascent_m is None:
+            total_ascent_m = derived_totals[0]
+        if total_descent_m is None:
+            total_descent_m = derived_totals[1]
 
     return total_ascent_m, total_descent_m
 

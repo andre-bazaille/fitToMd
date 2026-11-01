@@ -519,3 +519,64 @@ def test_lap_timing_fallback_rejects_untrusted_laps(
     )
     assert [s.time_seconds for s in SplitBuilder().build(activity)] == [300, 300]
     assert all(t.sampling_note is None for t in TransitionBuilder().build(activity))
+
+
+@pytest.mark.parametrize(
+    ("session_totals", "lap_totals", "prefer_records", "expected"),
+    [
+        ((61.0, 56.0), (80.0, 70.0), False, (61.0, 56.0)),
+        ((0.0, 0.0), (80.0, 70.0), False, (0.0, 0.0)),
+        ((None, None), (61.0, 56.0), False, (61.0, 56.0)),
+        ((61.0, None), (80.0, 56.0), False, (61.0, 56.0)),
+        ((61.0, None), (None, None), False, (61.0, 0.0)),
+        ((None, 56.0), (None, None), False, (10.0, 56.0)),
+        ((None, None), (None, None), False, (10.0, 0.0)),
+        ((61.0, 56.0), (80.0, 70.0), True, (10.0, 0.0)),
+    ],
+)
+def test_summary_resolves_each_elevation_total_by_source_priority(
+    session_totals: tuple[float | None, float | None],
+    lap_totals: tuple[float | None, float | None],
+    prefer_records: bool,
+    expected: tuple[float, float],
+) -> None:
+    from dataclasses import replace
+
+    start = datetime(2026, 11, 1)
+    activity = Activity(
+        session=ActivitySession(
+            total_ascent_m=session_totals[0], total_descent_m=session_totals[1]
+        ),
+        laps=tuple(
+            replace(
+                _lap(i, 1000.0, 300.0),
+                total_ascent_m=lap_totals[0] / 2 if lap_totals[0] is not None else None,
+                total_descent_m=lap_totals[1] / 2
+                if lap_totals[1] is not None
+                else None,
+            )
+            for i in (1, 2)
+        ),
+        records=(
+            _record(start, 0.0, 0.0, 100.0, 120),
+            _record(start + timedelta(seconds=300), 300.0, 1000.0, 110.0, 120),
+        ),
+    )
+    summary = SessionSummaryBuilder().build(activity, prefer_records=prefer_records)
+
+    assert (summary.total_ascent_m, summary.total_descent_m) == expected
+
+
+@pytest.mark.parametrize("prefer_records", (False, True))
+@pytest.mark.parametrize("with_totals", (False, True))
+def test_summary_handles_insufficient_altitude_records(
+    prefer_records: bool, with_totals: bool
+) -> None:
+    totals = (61.0, 56.0) if with_totals else (None, None)
+    activity = Activity(
+        session=ActivitySession(total_ascent_m=totals[0], total_descent_m=totals[1]),
+        records=(_record(datetime(2026, 11, 1), 0.0, 0.0, 100.0, 120),),
+    )
+    summary = SessionSummaryBuilder().build(activity, prefer_records=prefer_records)
+
+    assert (summary.total_ascent_m, summary.total_descent_m) == totals

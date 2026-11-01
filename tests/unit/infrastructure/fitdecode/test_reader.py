@@ -800,7 +800,7 @@ def test_generator_does_not_replace_fit_temperature_with_historical_weather(
     assert report.summary.avg_temperature_c == pytest.approx(20.0)
 
 
-def test_generator_derives_noise_resistant_elevation_gain_loss_from_records() -> None:
+def test_generator_prefers_fit_session_elevation_totals_over_smoothed_records() -> None:
     start = datetime(2026, 3, 29, 8, 45, 0)
     frames = [
         FakeFrame(
@@ -833,10 +833,8 @@ def test_generator_derives_noise_resistant_elevation_gain_loss_from_records() ->
 
     report = generator.build_report(Path("activity.fit"))
 
-    assert report.summary.total_ascent_m == pytest.approx(10.0, abs=1.0)
-    assert report.summary.total_descent_m == pytest.approx(0.0, abs=0.5)
-    assert report.summary.total_ascent_m < 24.0
-    assert report.summary.total_descent_m < 17.0
+    assert report.summary.total_ascent_m == 24.0
+    assert report.summary.total_descent_m == 17.0
 
 
 def test_generator_respects_custom_elevation_filter_settings() -> None:
