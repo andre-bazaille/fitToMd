@@ -404,15 +404,24 @@ a compatibility alias.
 
 ## Weather enrichment
 
-FIT-native temperature/weather is used when present. Historical lookup is
-explicitly enabled with:
+Weather uses explicit FIT `weather_conditions` observations when available,
+selecting the observation nearest the activity start. Session, lap, and record
+temperatures are device sensor measurements, which can be affected by body heat;
+they are omitted from the report and are never treated as weather.
+For example, a COROS FIT export may contain a device average of 17C without the
+6C weather shown in Training Center. That weather value cannot be recovered from
+this file alone. Historical lookup is explicitly enabled with:
 
 ```bash
 fit-to-md activity.fit --weather-mode auto
 ```
 
 When FIT weather is unavailable, this sends the activity start coordinates and
-time to Open-Meteo. If lookup fails or the FIT file has no start location/time,
+time to Open-Meteo. If session coordinates are absent (as in COROS exports), the
+first valid coordinate pair in the track is used. Activities within the archive's
+five-day delay use Open-Meteo's recent-past forecast data; older activities use
+the historical archive. These estimates can differ from COROS's weather source.
+If lookup fails or the FIT file has no usable location/time,
 the report remains usable and states that weather is unavailable.
 
 Weather and terrain enrichment are best-effort. Service failures, malformed

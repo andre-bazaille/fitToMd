@@ -10,6 +10,7 @@ from fit_to_md.domain.reporting.entities import (
     Split,
     TransitionDynamics,
     TransitionSample,
+    WeatherSummary,
 )
 
 _ELEVATION_SMOOTHING_DISTANCE_M = 170.0
@@ -170,8 +171,40 @@ class SessionSummaryBuilder:
             avg_temperature_c=avg_temperature_c,
             min_temperature_c=min_temperature_c,
             max_temperature_c=max_temperature_c,
+            weather=_build_observed_weather(activity, start_time),
             sport=activity.sport,
         )
+
+
+def _build_observed_weather(
+    activity: Activity, start_time: datetime | None
+) -> WeatherSummary | None:
+    if not activity.weather_observations:
+        return None
+    observation = activity.weather_observations[0]
+    if start_time is not None:
+        timed = [
+            item
+            for item in activity.weather_observations
+            if item.observed_at is not None
+        ]
+        if timed:
+            observation = min(
+                timed,
+                key=lambda item: (
+                    abs((item.observed_at - start_time).total_seconds())
+                    if item.observed_at is not None
+                    else float("inf")
+                ),
+            )
+    return WeatherSummary(
+        source="fit",
+        temperature_c=observation.temperature_c,
+        apparent_temperature_c=observation.apparent_temperature_c,
+        condition_summary=None,
+        wind_speed_kmh=None,
+        wind_direction_label=None,
+    )
 
 
 class SplitBuilder:

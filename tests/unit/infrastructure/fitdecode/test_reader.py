@@ -566,7 +566,7 @@ def test_generator_normalizes_running_record_cadence_with_fractional_component()
     assert report.splits[0].avg_cadence_spm == 161
 
 
-def test_generator_derives_weather_summary_from_record_temperatures_when_session_missing() -> (
+def test_generator_derives_device_temperature_from_records_when_session_missing() -> (
     None
 ):
     start = datetime(2026, 3, 29, 8, 30, 0)
@@ -729,7 +729,7 @@ def test_generator_enriches_missing_weather_from_provider() -> None:
 
 
 @pytest.mark.parametrize("temperature_source", ["session", "record", "lap"])
-def test_generator_does_not_replace_fit_temperature_with_historical_weather(
+def test_generator_enriches_weather_independently_of_device_temperature(
     temperature_source: str,
 ) -> None:
     start = datetime(2026, 3, 29, 10, 0, 0)
@@ -766,7 +766,7 @@ def test_generator_does_not_replace_fit_temperature_with_historical_weather(
             )
         )
 
-    class UnexpectedWeatherProvider:
+    class HistoricalWeatherProvider:
         def __init__(self) -> None:
             self.calls = 0
 
@@ -789,15 +789,117 @@ def test_generator_does_not_replace_fit_temperature_with_historical_weather(
                 )
             )
 
-    weather_provider = UnexpectedWeatherProvider()
+    weather_provider = HistoricalWeatherProvider()
     report = _generator(
         reader_factory=lambda _: FakeReader(frames),
         weather_provider=weather_provider,
     ).build_report(Path("activity.fit"))
 
-    assert weather_provider.calls == 0
-    assert report.summary.weather is None
+    assert weather_provider.calls == 1
+    assert report.summary.weather is not None
+    assert report.summary.weather.temperature_c == pytest.approx(5.0)
     assert report.summary.avg_temperature_c == pytest.approx(20.0)
+
+
+def test_generator_uses_fit_weather_instead_of_coros_device_temperature() -> None:
+    start = datetime(2026, 11, 8, 18, 35, 37)
+    frames = [
+        FakeFrame("file_id", {"manufacturer": "coros"}),
+        FakeFrame("session", {"start_time": start, "avg_temperature": 17}),
+        FakeFrame("lap", {"avg_temperature": 23}),
+        FakeFrame(
+            "weather_conditions",
+            {
+                "weather_report": "current",
+                "temperature": 6,
+                "temperature_feels_like": 4,
+                "observed_at_time": start,
+            },
+        ),
+    ]
+
+    class UnexpectedWeatherProvider:
+        def lookup(self, **kwargs):
+            pytest.fail("FIT weather must take precedence over historical lookup")
+
+    report, markdown = _generator(
+        reader_factory=lambda _: FakeReader(frames),
+        weather_provider=UnexpectedWeatherProvider(),
+    ).execute_with_report(Path("activity.fit"))
+
+    assert report.summary.avg_temperature_c == 17
+    assert report.summary.weather is not None
+    assert report.summary.weather.temperature_c == 6
+    assert report.summary.weather.source == "fit"
+    assert "- **Weather:** 6.0C, feels like 4.0C [fit]" in markdown
+    assert "Device Temperature" not in markdown
+    assert "17.0C" not in markdown
+
+
+def test_coros_sensor_temperature_alone_is_not_weather() -> None:
+    frames = [
+        FakeFrame("file_id", {"manufacturer": "coros"}),
+        FakeFrame("session", {"avg_temperature": 17}),
+        FakeFrame("lap", {"avg_temperature": 23}),
+        FakeFrame("lap", {"avg_temperature": 15}),
+    ]
+    report, markdown = _generator(
+        reader_factory=lambda _: FakeReader(frames),
+    ).execute_with_report(Path("activity.fit"))
+
+    assert report.summary.avg_temperature_c == 17
+    assert report.summary.weather is None
+    assert "- **Weather:** FIT and historical weather data unavailable" in markdown
+    assert "Device Temperature" not in markdown
+    assert "17.0C" not in markdown
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"weather_report": "forecast", "temperature": 6},
+        {"weather_report": "hourly_forecast", "temperature": 6},
+        {"weather_report": "current"},
+        {"weather_report": "current", "temperature": "bad"},
+        {"weather_report": "current", "temperature": True},
+        {"weather_report": "current", "temperature": float("nan")},
+        {"weather_report": "current", "temperature": float("inf")},
+    ],
+)
+def test_reader_ignores_unusable_weather_observations(
+    values: dict[str, object],
+) -> None:
+    activity = FitdecodeActivityReader(
+        reader_factory=lambda _: FakeReader([FakeFrame("weather_conditions", values)])
+    ).read(Path("activity.fit"))
+
+    assert activity.weather_observations == ()
+    assert SessionSummaryBuilder().build(activity).weather is None
+
+
+@pytest.mark.parametrize("report_type", [None, "current", 0])
+def test_reader_preserves_zero_weather_temperature(report_type: object) -> None:
+    timestamp = datetime(2026, 11, 8, 18)
+    activity = FitdecodeActivityReader(
+        reader_factory=lambda _: FakeReader(
+            [
+                FakeFrame(
+                    "weather_conditions",
+                    {
+                        "weather_report": report_type,
+                        "temperature": 0,
+                        "temperature_feels_like": float("nan"),
+                        "timestamp": timestamp,
+                    },
+                )
+            ]
+        )
+    ).read(Path("activity.fit"))
+
+    assert len(activity.weather_observations) == 1
+    assert activity.weather_observations[0].observed_at == timestamp
+    assert activity.weather_observations[0].temperature_c == 0
+    assert activity.weather_observations[0].apparent_temperature_c is None
 
 
 def test_generator_prefers_fit_session_elevation_totals_over_smoothed_records() -> None:

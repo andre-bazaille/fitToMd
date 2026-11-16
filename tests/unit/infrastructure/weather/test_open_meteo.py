@@ -3,6 +3,7 @@ import json
 from datetime import UTC, datetime
 from http.client import IncompleteRead
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -91,6 +92,70 @@ def test_open_meteo_provider_parses_hourly_weather() -> None:
     assert weather.wind_direction_label == "SW"
     assert weather.temperature_min_c == 15.2
     assert weather.temperature_max_c == 16.5
+
+
+@pytest.mark.parametrize(
+    ("start_day", "end_day", "expected_host"),
+    [
+        (8, 8, "api.open-meteo.com"),
+        (3, 3, "api.open-meteo.com"),
+        (2, 3, "api.open-meteo.com"),
+        (2, 2, "archive-api.open-meteo.com"),
+        (9, 9, "archive-api.open-meteo.com"),
+    ],
+)
+def test_open_meteo_uses_recent_past_endpoint_during_archive_delay(
+    start_day: int,
+    end_day: int,
+    expected_host: str,
+) -> None:
+    calls: list[str] = []
+
+    def fake_urlopen(url: str, timeout: int):
+        calls.append(url)
+        return FakeResponse(
+            {
+                "hourly": {
+                    "time": [f"2026-11-{start_day:02}T11:00"],
+                    "temperature_2m": [6],
+                }
+            }
+        )
+
+    provider = OpenMeteoHistoricalWeatherProvider(
+        urlopen_fn=fake_urlopen,
+        now_fn=lambda: datetime(2026, 11, 8, 23, tzinfo=UTC),
+    )
+    result = provider.lookup(
+        start_time=datetime(2026, 11, start_day, 11, tzinfo=UTC),
+        end_time=datetime(2026, 11, end_day, 12, tzinfo=UTC),
+        latitude_deg=48.85,
+        longitude_deg=2.35,
+    )
+
+    assert urlsplit(calls[0]).netloc == expected_host
+    assert parse_qs(urlsplit(calls[0]).query)["start_date"] == [
+        f"2026-11-{start_day:02}"
+    ]
+    assert result.value is not None
+    assert result.value.temperature_c == 6
+
+
+def test_open_meteo_preserves_custom_endpoint_for_recent_dates() -> None:
+    calls: list[str] = []
+
+    def fake_urlopen(url: str, timeout: int):
+        calls.append(url)
+        return FakeResponse({"hourly": {"time": []}})
+
+    provider = OpenMeteoHistoricalWeatherProvider(
+        base_url="https://weather.example/archive",
+        urlopen_fn=fake_urlopen,
+        now_fn=lambda: datetime(2026, 11, 8, tzinfo=UTC),
+    )
+    provider.lookup(datetime(2026, 11, 8), None, 48.85, 2.35)
+
+    assert calls[0].startswith("https://weather.example/archive?")
 
 
 @pytest.mark.parametrize("payload", ([], None, "unexpected", 42, True))

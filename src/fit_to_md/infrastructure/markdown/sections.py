@@ -160,13 +160,6 @@ def _uses_pace(sport: str | None) -> bool:
 
 
 def _format_weather(summary: SessionSummary) -> str:
-    if summary.has_fit_temperature:
-        return (
-            f"Avg {_format_temperature(summary.avg_temperature_c)} / "
-            f"Min {_format_temperature(summary.min_temperature_c)} / "
-            f"Max {_format_temperature(summary.max_temperature_c)} [fit]"
-        )
-
     if summary.weather is not None:
         parts = [
             _format_temperature(summary.weather.temperature_c),

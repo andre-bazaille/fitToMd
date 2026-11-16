@@ -9,11 +9,44 @@ from fit_to_md.domain.activity import (
     ActivityRecord,
     ActivitySession,
 )
+from fit_to_md.domain.activity.entities import WeatherObservation
 from fit_to_md.domain.reporting.services import (
     SessionSummaryBuilder,
     SplitBuilder,
     TransitionBuilder,
 )
+
+
+@pytest.mark.parametrize("has_start", [True, False])
+def test_summary_selects_weather_nearest_start_or_first_without_start(
+    has_start: bool,
+) -> None:
+    start = datetime(2026, 11, 8, 18)
+    activity = Activity(
+        session=ActivitySession(start_time=start if has_start else None),
+        weather_observations=(
+            WeatherObservation(start + timedelta(hours=1), 10),
+            WeatherObservation(None, 12),
+            WeatherObservation(start - timedelta(minutes=5), 6),
+        ),
+    )
+
+    weather = SessionSummaryBuilder().build(activity).weather
+
+    assert weather is not None
+    assert weather.temperature_c == (6 if has_start else 10)
+
+
+def test_summary_preserves_undated_weather_when_no_timed_observations_exist() -> None:
+    activity = Activity(
+        session=ActivitySession(start_time=datetime(2026, 11, 8, 18)),
+        weather_observations=(WeatherObservation(None, 6),),
+    )
+
+    weather = SessionSummaryBuilder().build(activity).weather
+
+    assert weather is not None
+    assert weather.temperature_c == 6
 
 
 def test_reporting_services_build_report_parts_from_domain_activity() -> None:

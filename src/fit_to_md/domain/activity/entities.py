@@ -63,6 +63,15 @@ class ActivityLap:
 
 
 @dataclass(frozen=True)
+class WeatherObservation:
+    """Ambient weather reported independently of device temperature sensors."""
+
+    observed_at: datetime | None
+    temperature_c: float
+    apparent_temperature_c: float | None = None
+
+
+@dataclass(frozen=True)
 class Activity:
     session: ActivitySession = field(default_factory=ActivitySession)
     sport: str | None = None
@@ -75,3 +84,4 @@ class Activity:
     # Complete timestamped samples, including records without usable measurements.
     # Empty for callers that provide only the legacy filtered `records` stream.
     record_samples: tuple[ActivityRecord, ...] = field(default_factory=tuple)
+    weather_observations: tuple[WeatherObservation, ...] = field(default_factory=tuple)

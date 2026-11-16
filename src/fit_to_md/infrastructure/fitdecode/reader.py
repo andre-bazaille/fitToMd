@@ -1,6 +1,9 @@
-from collections.abc import Callable
+import re
+import warnings
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from datetime import datetime
+from math import isfinite
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,6 +14,7 @@ from fit_to_md.domain.activity.entities import (
     ActivityLap,
     ActivityRecord,
     ActivitySession,
+    WeatherObservation,
 )
 from fit_to_md.domain.activity.ports import (
     InvalidActivityError,
@@ -59,6 +63,7 @@ class FitdecodeActivityReader:
         laps: list[ActivityLap] = []
         records: list[ActivityRecord] = []
         record_samples: list[ActivityRecord] = []
+        weather_observations: list[WeatherObservation] = []
         timer_events: list[_TimerEvent] = []
         lap_values: list[dict[str, object]] = []
         step_values: list[dict[str, object]] = []
@@ -68,7 +73,7 @@ class FitdecodeActivityReader:
         sub_sport: str | None = None
 
         with self._reader_factory(str(source)) as fit_file:
-            for frame in fit_file:
+            for frame in _compatible_frames(fit_file):
                 if getattr(frame, "frame_type", None) != fitdecode.FIT_FRAME_DATA:
                     continue
 
@@ -88,6 +93,10 @@ class FitdecodeActivityReader:
                     lap_values.append(_extract_message_values(frame))
                 elif frame.name == "workout_step":
                     step_values.append(_extract_message_values(frame))
+                elif frame.name == "weather_conditions":
+                    observation = _parse_weather_observation(frame)
+                    if observation is not None:
+                        weather_observations.append(observation)
                 elif frame.name == "record":
                     record = _parse_record(frame)
                     if record is not None:
@@ -144,6 +153,7 @@ class FitdecodeActivityReader:
             ),
             records=records_with_elapsed,
             record_samples=samples_with_elapsed,
+            weather_observations=tuple(weather_observations),
             has_active_record_timing=has_active_timing,
             active_timeline=build_active_timeline(
                 session.start_time,
@@ -154,6 +164,63 @@ class FitdecodeActivityReader:
                 invalid_events=invalid_workout_events,
             ),
         )
+
+
+def _compatible_frames(fit_file: Any) -> Iterator[Any]:
+    """Accept the known short COROS event payload, preserving other warnings."""
+    frames = iter(fit_file)
+    while True:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            frame = next(frames, None)
+        short_event_data = (
+            frame is not None
+            and getattr(frame, "frame_type", None) == fitdecode.FIT_FRAME_DEFINITION
+            and frame.name == "event"
+            and any(
+                field.def_num == 3
+                and field.size == 1
+                and field.base_type.name == "byte"
+                for field in frame.field_defs
+            )
+        )
+        for warning in caught:
+            if (
+                short_event_data
+                and len(caught) == 1
+                and warning.category is UserWarning
+                and re.fullmatch(
+                    r"invalid field size 1 in definition message @ \d+ "
+                    r"for type uint32 \(expected a multiple of 4\)",
+                    str(warning.message),
+                )
+            ):
+                continue
+            warnings.warn_explicit(
+                warning.message, warning.category, warning.filename, warning.lineno
+            )
+        if frame is None:
+            return
+        yield frame
+
+
+def _parse_weather_observation(frame: Any) -> WeatherObservation | None:
+    values = _extract_message_values(frame)
+    # Forecasts are not observations of the activity's conditions.
+    if values.get("weather_report") not in (None, "current", 0):
+        return None
+    temperature = _coerce_float(values.get("temperature"))
+    if temperature is None or not isfinite(temperature):
+        return None
+    apparent = _coerce_float(values.get("temperature_feels_like"))
+    if apparent is not None and not isfinite(apparent):
+        apparent = None
+    return WeatherObservation(
+        observed_at=_coerce_datetime(values.get("observed_at_time"))
+        or _coerce_datetime(values.get("timestamp")),
+        temperature_c=temperature,
+        apparent_temperature_c=apparent,
+    )
 
 
 def _parse_session(values: dict[str, object], is_running: bool) -> ActivitySession:

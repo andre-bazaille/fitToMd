@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -191,7 +192,7 @@ def test_historical_weather_enriches_missing_native_temperature() -> None:
     ]
 
 
-def test_native_temperature_prevents_historical_weather_lookup() -> None:
+def test_failed_weather_lookup_keeps_device_temperature_separate() -> None:
     provider = StubWeatherProvider(None)
     use_case = GenerateMarkdownReport(
         reader=StubReader(_activity(native_temperature=18.0)),
@@ -202,7 +203,8 @@ def test_native_temperature_prevents_historical_weather_lookup() -> None:
     report, _ = use_case.execute_with_report(Path("activity.fit"))
 
     assert report.summary.avg_temperature_c == 18.0
-    assert provider.calls == []
+    assert report.summary.weather is None
+    assert len(provider.calls) == 1
 
 
 def test_missing_provider_data_preserves_offline_summary() -> None:
@@ -217,6 +219,77 @@ def test_missing_provider_data_preserves_offline_summary() -> None:
 
     assert report.summary.weather is None
     assert len(provider.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "session_coordinates", [(None, None), (48.0, None), (91.0, 2.0)]
+)
+@pytest.mark.parametrize("samples_only", [False, True])
+def test_weather_uses_first_complete_track_coordinate_when_session_gps_is_missing(
+    session_coordinates: tuple[float | None, float | None],
+    samples_only: bool,
+) -> None:
+    activity = _activity()
+    activity = replace(
+        activity,
+        session=replace(
+            activity.session,
+            start_latitude_deg=session_coordinates[0],
+            start_longitude_deg=session_coordinates[1],
+        ),
+        records=(
+            replace(activity.records[0], latitude_deg=None),
+            activity.records[1],
+        ),
+    )
+    if samples_only:
+        activity = replace(activity, record_samples=activity.records, records=())
+    provider = StubWeatherProvider(None)
+    GenerateMarkdownReport(
+        reader=StubReader(activity),
+        renderer=StubRenderer(),
+        weather_provider=provider,
+    ).execute_detailed(Path("coros.fit"))
+
+    assert len(provider.calls) == 1
+    assert provider.calls[0][2:] == (48.86, 2.36)
+
+
+@pytest.mark.parametrize(
+    "coordinates",
+    [
+        (None, None),
+        (None, 2.0),
+        (48.0, None),
+        (float("nan"), 2.0),
+        (48.0, float("inf")),
+        (91.0, 2.0),
+        (48.0, -181.0),
+    ],
+)
+def test_weather_skips_lookup_without_valid_complete_coordinates(
+    coordinates: tuple[float | None, float | None],
+) -> None:
+    activity = _activity()
+    activity = replace(
+        activity,
+        session=replace(
+            activity.session, start_latitude_deg=None, start_longitude_deg=None
+        ),
+        records=tuple(
+            replace(record, latitude_deg=coordinates[0], longitude_deg=coordinates[1])
+            for record in activity.records
+        ),
+    )
+    provider = StubWeatherProvider(None)
+    result = GenerateMarkdownReport(
+        reader=StubReader(activity),
+        renderer=StubRenderer(),
+        weather_provider=provider,
+    ).execute_detailed(Path("indoor.fit"))
+
+    assert provider.calls == []
+    assert result.report.summary.weather is None
 
 
 def test_dem_enrichment_is_applied_before_report_calculation() -> None:

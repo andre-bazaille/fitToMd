@@ -2,7 +2,7 @@ import json
 import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http.client import HTTPException
 from statistics import mean
 from typing import Any
@@ -18,6 +18,8 @@ from fit_to_md.domain.reporting.ports import (
 )
 
 _PROVIDER_NAME = "Open-Meteo"
+_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+_RECENT_URL = "https://api.open-meteo.com/v1/forecast"
 
 
 @dataclass(frozen=True)
@@ -33,13 +35,15 @@ class _HourlyWeatherSample:
 class OpenMeteoHistoricalWeatherProvider:
     def __init__(
         self,
-        base_url: str = "https://archive-api.open-meteo.com/v1/archive",
+        base_url: str = _ARCHIVE_URL,
         timeout_s: int = 10,
         urlopen_fn: Callable[..., Any] = urlopen,
+        now_fn: Callable[[], datetime] | None = None,
     ) -> None:
         self._base_url = base_url
         self._timeout_s = timeout_s
         self._urlopen_fn = urlopen_fn
+        self._now_fn = now_fn or (lambda: datetime.now(UTC))
 
     def lookup(
         self,
@@ -197,7 +201,17 @@ class OpenMeteoHistoricalWeatherProvider:
                 "wind_speed_unit": "kmh",
             }
         )
-        return f"{self._base_url}?{query}"
+        base_url = self._base_url
+        today = _normalize_datetime(self._now_fn()).date()
+        # Reanalysis archives lag recent activities; the forecast API also
+        # serves recent past dates with the same hourly response schema.
+        if (
+            base_url == _ARCHIVE_URL
+            and 0 <= (today - end_time.date()).days <= 5
+            and start_time.date() >= today - timedelta(days=92)
+        ):
+            base_url = _RECENT_URL
+        return f"{base_url}?{query}"
 
 
 def _normalize_datetime(value: datetime) -> datetime:

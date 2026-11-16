@@ -1,3 +1,20 @@
+## 2026-11-08
+
+- Added a reproducible synthetic COROS FIT fixture and offline CLI integration
+  tests covering track GPS fallback, short event data recovery, weather config,
+  recent/archive weather lookup, provider failure, and omitted device temperature.
+- Removed device temperature from Markdown reports; weather continues to use
+  explicit FIT observations or optional historical lookup.
+- Fixed automatic weather lookup for COROS files without session GPS coordinates
+  by falling back to a valid track coordinate pair. Recent activities now use
+  Open-Meteo's recent-past endpoint during the historical archive delay.
+- Quieted the recoverable one-byte COROS event data definition warning while
+  preserving warnings for CRC failures and other malformed fields.
+- Separated FIT device temperature measurements from ambient weather. Weather now
+  uses current FIT weather observations nearest the activity start, or opt-in
+  historical lookup even when device temperatures exist. COROS sensor averages
+  no longer appear as weather or prevent weather enrichment.
+
 ## 2026-11-01
 
 - Preserved FIT session ascent/descent totals, with lap and filtered-record

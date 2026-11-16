@@ -32,7 +32,7 @@ class SessionSummary:
 
     @property
     def has_fit_temperature(self) -> bool:
-        """Return whether the activity contains any FIT-native temperature data."""
+        """Return whether FIT device temperature measurements are available."""
         return any(
             temperature is not None
             for temperature in (

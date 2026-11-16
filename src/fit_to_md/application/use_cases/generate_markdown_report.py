@@ -1,6 +1,7 @@
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import StrEnum
+from itertools import chain
 from math import isfinite
 from pathlib import Path
 
@@ -188,21 +189,17 @@ class GenerateMarkdownReport:
     def _enrich_summary_weather(
         self, summary: SessionSummary, activity: Activity
     ) -> tuple[SessionSummary, tuple[ProviderDiagnostic, ...]]:
-        if (
-            self._weather_provider is None
-            or summary.weather is not None
-            or summary.has_fit_temperature
-        ):
+        if self._weather_provider is None or summary.weather is not None:
             return summary, ()
 
         start_time = summary.start_time
         if start_time is None:
             return summary, ()
 
-        latitude_deg = activity.session.start_latitude_deg
-        longitude_deg = activity.session.start_longitude_deg
-        if latitude_deg is None or longitude_deg is None:
+        coordinates = _weather_coordinates(activity)
+        if coordinates is None:
             return summary, ()
+        latitude_deg, longitude_deg = coordinates
 
         end_time = activity.session.end_time
         if end_time is None and summary.total_elapsed_time_s is not None:
@@ -220,3 +217,24 @@ class GenerateMarkdownReport:
             replace(summary, weather=lookup_result.value),
             lookup_result.diagnostics,
         )
+
+
+def _weather_coordinates(activity: Activity) -> tuple[float, float] | None:
+    candidates = chain(
+        [(activity.session.start_latitude_deg, activity.session.start_longitude_deg)],
+        (
+            (record.latitude_deg, record.longitude_deg)
+            for record in activity.record_samples or activity.records
+        ),
+    )
+    for latitude, longitude in candidates:
+        if (
+            latitude is not None
+            and longitude is not None
+            and isfinite(latitude)
+            and isfinite(longitude)
+            and -90 <= latitude <= 90
+            and -180 <= longitude <= 180
+        ):
+            return latitude, longitude
+    return None

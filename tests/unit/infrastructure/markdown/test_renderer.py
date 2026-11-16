@@ -99,7 +99,8 @@ def test_render_formats_expected_markdown_sections() -> None:
     assert "- **Activity Type:** running" in markdown
     assert "- **Total Distance:** 10.50 km" in markdown
     assert "- **Avg Pace:** 5:15/km" in markdown
-    assert "- **Weather:** Avg 18.4C / Min 15.0C / Max 22.5C [fit]" in markdown
+    assert "Device Temperature" not in markdown
+    assert "- **Weather:** FIT and historical weather data unavailable" in markdown
     assert "| 1 | 1.00 km | 5:30 | 5:30 | +5m | 125 | 135 | 168 |" in markdown
     assert "## Heart Rate Dynamics (Per Kilometer)" in markdown
     assert "- **Km 4**" in markdown
@@ -261,7 +262,7 @@ def test_render_prefers_enriched_weather_summary() -> None:
     )
 
 
-def test_render_prefers_fit_temperature_when_both_weather_sources_are_present() -> None:
+def test_render_omits_device_temperature_and_preserves_weather() -> None:
     report = FitReport(
         summary=SessionSummary(
             start_time=datetime(2026, 3, 29, 6, 30, 0),
@@ -293,8 +294,9 @@ def test_render_prefers_fit_temperature_when_both_weather_sources_are_present() 
 
     markdown = MarkdownReportRenderer().render(report)
 
-    assert "- **Weather:** Avg 20.0C / Min - / Max - [fit]" in markdown
-    assert "[historical]" not in markdown
+    assert "Device Temperature" not in markdown
+    assert "20.0C" not in markdown
+    assert "- **Weather:** 5.0C, feels like 3.0C, Cloudy [historical]" in markdown
 
 
 def test_render_keeps_speed_units_for_non_running_activities() -> None:
