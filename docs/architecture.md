@@ -4,6 +4,102 @@
 
 ## Bounded Contexts
 
+### COROS Connection and Synchronization
+
+Connection owns the regional issuer, opaque account subject and credentials.
+`CorosSessionManager` runs login, local status, logout and non-interactive
+session recovery through typed ports. When OAuth rotates credentials, it saves
+them with account verification pending, confirms the original subject through
+`userinfo`, then makes the session available to the caller. An account switch
+requires an explicit logout. The application maps the confirmed identity to
+Synchronization's `AccountIdentity` without passing credentials to that domain.
+
+Infrastructure implements the regional OAuth/MCP gateway, OS vault and
+interprocess lock. The lock serializes production session mutations and has a
+separate lifetime from an output lock. `fit-coros-probe` shares the gateway and
+vault adapters and uses its own experimental credential namespace. Neither
+Activity nor Reporting depends on Connection.
+
+`fit_to_md.domain.synchronization` owns remote identities, UTC periods,
+acquisition and conversion states, and decisions about selection, recovery and
+reference changes. `PrepareSynchronization` reads the clock and local `ZoneInfo`
+once through application ports. The planner consumes normalized catalog and
+registry snapshots for the confirmed account and returns work and reference
+decisions. The registry can commit candidates and the reference atomically
+after complete discovery.
+
+`application.synchronization_discovery` consumes a typed catalogue reader.
+The COROS gateway encapsulates the session, MCP negotiation, response
+decoding and bounded network retries. The application checks echoed dates
+and splits saturated ranges into disjoint day ranges. It deduplicates the
+verified leaf results by identity and passes normalized activities and
+coverage to the domain planner. The planner filters activity starts against
+the exact UTC selection interval. Preview also checks destinations using the
+read-only registry snapshot and file availability port.
+
+`application.synchronization_storage` defines the registry, output-lock and
+file-publication ports. `SqliteOutput` binds an existing output directory to one
+confirmed account and opens its registry in `.fit-to-md/coros.sqlite3`. The
+registry records the vault entry name, and the OS vault holds the credentials.
+In the same metadata directory, `output.lock` holds a nonblocking OS lock and
+`registry.initialized` distinguishes a missing database from an unused output.
+A dry-run locks an existing lock file and opens the database in read-only mode.
+It creates neither file and requires a separate writable open for migration.
+
+`OutputStorage` keeps the minute-based FIT and report paths assigned at the
+first acquisition reservation. The local adapter stages files beside their
+destinations, verifies the FIT envelope and checksums, and uses an atomic rename
+that refuses a collision. It records the FIT size and SHA-256 before publication,
+then marks acquisition successful in a separate transaction. This ordering
+gives later reconciliation evidence if the process stops after the rename.
+Report publication also refuses collisions, including reports edited by hand.
+
+`application.synchronization_quota` coordinates explicit initialization through
+vault and registry ports. Under the session mutation lock, it publishes a
+pending vault binding, creates the versioned SQLite file atomically and marks
+the verified binding active. Each output uses the same account-wide ledger.
+Short `BEGIN IMMEDIATE` transactions enforce the rolling UTC window even when
+multiple outputs acquire concurrently. Daily totals group UTC events in the
+reporting timezone.
+
+`BudgetedFitRequests` checks the tracked local FIT through the output file port,
+then commits the reservation before invoking the single-activity request. A
+lost response leaves the unit in the ledger. An HTTP 429 on the FIT request
+stops further FIT requests for the run and carries an optional UTC retry time.
+
+`application.synchronization_acquisition` runs FIT acquisition under the
+output lock. It commits the selected candidates before processing them in
+start-time and identity order. An incomplete catalogue retains dated candidates
+for a later run. The gateway counts each catalogue tool call through the quota
+port, including retries, and downloads one resource per matching MCP response.
+The FIT adapter validates the record stream with the known COROS compatibility
+rule, independently of reporting support. The application records individual
+failures and halts on authorization or storage errors. The CLI presents the
+coverage and outcomes, including quota deferral and interruption.
+
+`application.synchronization_conversion` consumes verified local FITs under the
+same output lock and invokes `GenerateMarkdownReport` through a typed port.
+It records effective options and conversion outcomes independently of FIT
+acquisition. The CLI composes the same generator and provider diagnostics as
+local conversion. `status` reads the saved session and can inspect pending
+work in the account-bound output without opening a writable registry.
+
+The output registry travels with its FITs and reports when the complete output
+directory is copied with fitToMd stopped. A supported schema migration publishes
+a SQLite backup before applying changes in a transaction. The quota ledger is
+stored outside the output directory. Its vault binding is separate from the
+session credentials and ties the confirmed account to the ledger's absolute path
+and identity. On another machine, authenticating the same account grants access
+to its restored output tracking. Acquisition also requires a usable quota ledger
+and matching binding. See the [COROS operations guide](coros-sync-guide.md).
+
+Architecture tests enforce the independence of Connection and Synchronization
+from each other and from transport or storage adapters. The L0 decisions cover
+port responsibilities, timezone resolution, locking and quota.
+The preview uses the L0 candidate envelope. Live qualification around
+midnight and across accounts remains open before acquisition is qualified.
+[COROS technical decisions](coros-sync-technical-decisions.md)
+
 ### Activity
 
 `fit_to_md.domain.activity` contains the normalized activity model:

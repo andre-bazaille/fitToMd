@@ -46,6 +46,98 @@ py -3.12 -m venv .venv
 python -m pip install .
 ```
 
+### COROS synchronization
+
+On Linux and Windows, install the optional connection dependencies with
+`python -m pip install '.[coros]'`. See the [COROS guide](docs/coros-sync-guide.md)
+for setup on both platforms, troubleshooting, backup and recovery.
+
+Create the `reports/` directory before running these commands. Run `init-quota`
+for a known first-time setup.
+
+```bash
+fit-to-md coros login
+fit-to-md coros sync --dry-run --last-days 7 --output reports/
+fit-to-md coros init-quota
+fit-to-md coros sync --last-days 7 --output reports/
+fit-to-md coros sync --output reports/
+fit-to-md coros status --output reports/
+fit-to-md coros logout
+```
+
+`login` opens the browser and confirms your account. Pass `--region eu`,
+`--region us` or `--region cn` to select a region. The default is Europe for
+the first login and the saved region thereafter. Run `logout` before switching
+accounts or regions. `status` reports the locally saved session without
+contacting COROS. Supply `--output DIR` or a `--config` with an `output` entry
+to see the output paths, UTC reference, recorded timezone and pending work.
+`logout` removes the local session and preserves downloaded files, reports and
+tracking. Convert a local directory named `coros` with `fit-to-md ./coros/`.
+
+Use `coros sync --dry-run` to preview known activities, new activities, pending
+work, conflicts and estimated FIT requests. Use an existing output directory,
+and choose `--last-days N` (local calendar days including today) or
+`--since YYYY-MM-DD`. Without either option, the output needs an existing
+synchronization reference. Add `--download-only` to preview acquisition only.
+The command may renew your authorization and read catalogue metadata. It
+leaves the output and quota unchanged and makes no FIT or FIT URL requests.
+
+The preview shows the effective local timezone and whether COROS covered the
+requested dates. An incomplete catalogue yields a provisional plan and exit
+code 1. A complete preview returns 0 even if it identifies conflicts. The
+date envelope is qualified offline. COROS day boundaries around midnight
+still require verification against Training Hub.
+
+For the first synchronization, use `--since YYYY-MM-DD` or `--last-days N`.
+The command saves FITs in `reports/fits/` and writes Markdown reports in
+`reports/`. Add `--download-only` to defer conversion. A later normal run
+uses the verified FITs already on disk. The first run stores the start of
+the period. Complete discovery saves the candidates and the launch time
+together so unfinished work can be retried later.
+
+`coros sync --config FILE` accepts `output` and the existing report settings,
+including `workout-report`, `hr-zone-boundaries`, `weather-mode` and
+`elevation-source`. Command-line settings take precedence. Specify the period
+on the command line. COROS uses the recorded minute-based filename for each
+activity, including when the same config is shared with local conversion.
+
+After initialization, omit the period to resume pending work and discover
+activities from the start of the local calendar day containing the saved UTC
+reference, using the machine's current timezone. Use an explicit period to
+retrieve activities imported late with an older start time. Later explicit
+periods leave the reference unchanged.
+To set it directly, run
+`fit-to-md coros sync --init-coros-reference YYYY-MM-DD --output reports/`.
+That command displays the previous and new reference and preserves the quota,
+tracked activities and files.
+
+If catalogue coverage is incomplete, the command saves dated candidates and
+suspends processing. Verified FITs are reused, including those published just
+before an interruption. Missing FITs are downloaded again. Damaged FITs are
+archived in `reports/.fit-to-md/damaged-fits/` before reacquisition. At the
+local or server quota, the command continues converting available FITs and
+prints the acquisition retry time if available.
+
+Deleted reports are recreated from the verified FIT. Existing tracked reports,
+including edited ones, are preserved when conversion settings change. An occupied
+destination without a recorded successful conversion is reported as a conflict.
+For a FIT marked unsupported, you can try the local conversion command manually.
+The COROS registry keeps the terminal state.
+
+The summary on stdout counts acquisition and conversion separately. Progress
+and diagnostics go to stderr. Exit codes are `0` for success, `1` for a partial
+result or operational error, `2` for invalid arguments, configuration or a
+missing initial reference, and `130` for interruption.
+
+Run `init-quota` once for a first-time account after logging in. It creates
+a local SQLite quota registry and stores its location in the OS vault. All
+output directories for that account share the registry. The local guard allows
+50 FIT requests per rolling UTC 24-hour window. Logout preserves the registry
+and its vault binding. If previously initialized quota state is lost or damaged,
+restore a reliable copy of the registry and its matching binding before
+acquiring FIT files. A full loss can look like a first-time setup, so reserve
+`init-quota` for accounts you know are new to this installation.
+
 ## Quick start
 
 ```bash

@@ -25,7 +25,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install development dependencies
-        run: python -m pip install --upgrade --editable ".[dev]"
+        run: python -m pip install --upgrade --editable ".[dev,coros]"
 
       - name: Lint
         run: ruff check src tests
@@ -54,10 +54,13 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install development dependencies
-        run: python -m pip install --upgrade --editable ".[dev]"
+        run: python -m pip install --upgrade --editable ".[dev,coros]" tzdata
 
       - name: Test activity-time output on Windows
         run: >-
           pytest --override-ini=addopts=
           tests/unit/cli/test_cli.py::test_run_can_name_output_from_activity_start_time
           tests/unit/cli/test_cli.py::test_run_uses_activity_time_names_and_skips_existing_reports
+
+      - name: Test COROS registry, publication and interprocess locking on Windows
+        run: pytest --override-ini=addopts= tests/unit/infrastructure/synchronization

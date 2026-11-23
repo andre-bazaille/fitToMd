@@ -105,6 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fit-to-md",
         description="Convert a FIT activity file or directory into Markdown reports.",
+        epilog="Run 'fit-to-md coros --help' for COROS connection commands.",
     )
     parser.add_argument(
         "input",
@@ -131,6 +132,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Name the default output file from the activity start time as 'YYYY-MM-DD HH-MM.md'.",
     )
+    add_report_arguments(parser)
+    return parser
+
+
+def add_report_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the settings shared by local and COROS report generation."""
     parser.add_argument(
         "--dynamics-step-size",
         "--transition-sample-interval",
@@ -190,7 +197,24 @@ def build_parser() -> argparse.ArgumentParser:
         type=_hr_zone_boundaries,
         help="Four increasing comma-separated heart-rate thresholds in bpm.",
     )
-    return parser
+
+
+def build_report_runtime(args: argparse.Namespace) -> _DefaultRuntime:
+    """Build the report generator from validated command-line settings."""
+    return _build_default_runtime(
+        dynamics_step_size=args.dynamics_step_size,
+        weather_mode=args.weather_mode,
+        elevation_smoothing_distance=args.elevation_smoothing_distance,
+        elevation_min_change=args.elevation_min_change,
+        elevation_source=args.elevation_source,
+        dem_sample_distance=args.dem_sample_distance,
+        opentopodata_dataset=args.opentopodata_dataset,
+        opentopodata_base_url=args.opentopodata_base_url,
+        report_options=ReportGenerationOptions(
+            workout_report=WorkoutReportMode(args.workout_report),
+            hr_zone_boundaries=args.hr_zone_boundaries,
+        ),
+    )
 
 
 def build_default_generator(
@@ -270,16 +294,16 @@ def run(
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
-    parser = build_parser()
     command_line = list(argv) if argv is not None else sys.argv[1:]
-    args = parser.parse_args(_arguments_with_config_defaults(parser, command_line))
-    report_options = ReportGenerationOptions(
-        workout_report=WorkoutReportMode(args.workout_report),
-        hr_zone_boundaries=args.hr_zone_boundaries,
-    )
-
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
+    if command_line and command_line[0] == "coros":
+        from fit_to_md.coros_cli import run_connection_command
+
+        return run_connection_command(command_line[1:], stdout, stderr)
+
+    parser = build_parser()
+    args = parser.parse_args(_arguments_with_config_defaults(parser, command_line))
     input_path = args.input
 
     if not input_path.exists():
@@ -309,17 +333,7 @@ def run(
             return 0
 
     if report_generator is None:
-        runtime = _build_default_runtime(
-            dynamics_step_size=args.dynamics_step_size,
-            weather_mode=args.weather_mode,
-            elevation_smoothing_distance=args.elevation_smoothing_distance,
-            elevation_min_change=args.elevation_min_change,
-            elevation_source=args.elevation_source,
-            dem_sample_distance=args.dem_sample_distance,
-            opentopodata_dataset=args.opentopodata_dataset,
-            opentopodata_base_url=args.opentopodata_base_url,
-            report_options=report_options,
-        )
+        runtime = build_report_runtime(args)
         generator = runtime.generator
         if elevation_diagnostics is None:
             elevation_diagnostics = runtime.elevation_diagnostics
@@ -507,10 +521,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _arguments_with_config_defaults(
     parser: argparse.ArgumentParser,
     command_line: Sequence[str],
+    *,
+    use_options: Sequence[str] = CONFIGURABLE_OPTIONS,
 ) -> Sequence[str]:
-    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser = argparse.ArgumentParser(add_help=False, exit_on_error=False)
     config_parser.add_argument("--config", type=Path)
-    config_args, _ = config_parser.parse_known_args(command_line)
+    try:
+        config_args, _ = config_parser.parse_known_args(command_line)
+    except argparse.ArgumentError as error:
+        parser.error(str(error))
     if config_args.config is None:
         return command_line
 
@@ -524,13 +543,15 @@ def _arguments_with_config_defaults(
         if option in _BOOLEAN_CONFIG_OPTIONS:
             normalized_value = value.casefold()
             if normalized_value in _TRUE_CONFIG_VALUES:
-                defaults.append(f"--{option}")
+                flag = f"--{option}"
             elif normalized_value in _FALSE_CONFIG_VALUES:
-                defaults.append(f"--no-{option}")
+                flag = f"--no-{option}"
             else:
                 parser.error(f"invalid boolean value {value!r} for option {option!r}")
-        else:
-            defaults.extend((f"--{option}", value))
+            if option in use_options:
+                defaults.append(flag)
+        elif option in use_options:
+            defaults.append(f"--{option}={value}")
     return [*defaults, *command_line]
 
 

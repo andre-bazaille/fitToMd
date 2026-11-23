@@ -1,3 +1,73 @@
+## 2026-11-22
+
+- Translated the [COROS sync guide](docs/coros-sync-guide.md) into English.
+- Recorded five findings from the [COROS synchronization code review](docs/coros-sync-code-review.md), ordered by severity.
+- Fixed COROS downloads with large FIT responses and made interrupted quota
+  initialization resumable when the existing SQLite registry is verified.
+- Stopped catalogue discovery when COROS requires a delay, aligned preview FIT
+  estimates with acquisition order, and added daily catalogue and FIT counts
+  to the synchronization summary.
+- Added Markdown generation to normal COROS synchronization, with the existing
+  report settings and CLI precedence over `--config`. Verified FITs are reused
+  after download-only runs, missing reports are regenerated, and local conversion
+  continues when the FIT quota is reached. Acquisition and conversion have
+  separate outcomes and counters. Existing reports are preserved and unsupported
+  FITs keep a terminal conversion state.
+- Extended `coros status` with optional output paths, reference, timezone and
+  pending work from the read-only registry.
+- Added the [COROS operations guide](docs/coros-sync-guide.md) for Linux and
+  Windows setup, synchronization, diagnostics, and backup and recovery. Updated
+  the L9 qualification record with offline evidence and remaining checks.
+
+## 2026-11-21
+
+- Added incremental COROS FIT downloads and `--init-coros-reference`.
+  Complete discovery commits the candidates and UTC reference together.
+  Incremental runs resume tracked downloads outside the discovery window,
+  reconcile verified FITs after interruption, and reacquire missing or
+  damaged FITs. Damaged files are preserved in `.fit-to-md/damaged-fits/`.
+- Added `fit-to-md coros sync --download-only` with `--since` or `--last-days`.
+  It records discovered activities, reuses verified FITs and saves new FITs
+  atomically under the account's shared quota. The summary reports incomplete
+  discovery, individual failures and downloads deferred for quota.
+- Added `fit-to-md coros sync --dry-run` for explicit and incremental
+  previews. The command checks catalogue coverage, subdivides saturated
+  periods and reports known activities, new work, retries, conflicts and
+  estimated FIT requests without changing local tracking or requesting FIT
+  files or URLs.
+- Added `fit-to-md coros init-quota` and a persistent FIT budget shared by all
+  outputs for one account. Reservations enforce 50 requests per rolling UTC
+  24 hours and survive timeouts and logout. The ledger reports catalogue and FIT
+  calls separately by local day. FIT HTTP 429 responses surface an optional
+  retry time and stop further acquisition requests for the run.
+- Added COROS output storage with an account-bound SQLite registry, versioned
+  migrations, and a nonblocking per-output lock. FIT and report publication
+  preserves existing files, and the registry records FIT integrity for recovery.
+  Dry-run access leaves the output untouched and refuses a busy directory.
+
+## 2026-11-17
+
+- Added COROS production `login`, local `status` and `logout`. The connection
+  confirms the regional account, stores credentials in the OS vault and saves
+  token rotation before non-interactive reuse. The experimental probe keeps its
+  own session.
+- Added the Synchronization domain for COROS L1, with account-scoped identities,
+  calendar periods, independent acquisition and conversion states, and offline
+  planning of new work, retries and UTC reference updates.
+- Added offline-tested COROS identity and activity-date diagnostics to the
+  experimental probe, with opaque fingerprints, trusted userinfo discovery,
+  UTC/local DST-aware timestamps and explicit rejection of incomplete dates.
+- Documented [L0 technical decisions](docs/coros-sync-technical-decisions.md),
+  port boundaries, quota recovery, manual conversion policy and remaining live
+  qualification gates, including reported Linux/Europe identity stability after
+  refresh/reconnection and UTC/local date concordance; midnight and cross-account
+  qualification remain open, with J0 pending.
+- Added a [COROS synchronization implementation and tracking plan](docs/coros-sync-implementation-plan.md), with delivery batches, dependencies, decision gates, and acceptance-test coverage.
+
+## 2026-11-16
+
+- Added the [functional specification for COROS FIT synchronization](docs/coros-sync-functional-specification.md), covering activity selection, authentication, recovery, and validation criteria.
+
 ## 2026-11-08
 
 - Added a reproducible synthetic COROS FIT fixture and offline CLI integration

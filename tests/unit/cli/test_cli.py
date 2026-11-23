@@ -116,6 +116,19 @@ class StubElevationDiagnostics:
         self.progress_updates.extend([(1, 3), (2, 3)])
 
 
+@pytest.mark.parametrize("source", [["./coros"], ["--", "coros"]])
+def test_local_path_named_coros_can_still_be_converted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: list[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    Path("coros").write_bytes(b"FIT")
+    generator = StubGenerator("# FIT Report\n")
+    stdout, stderr = io.StringIO(), io.StringIO()
+    assert run(source, report_generator=generator, stdout=stdout, stderr=stderr) == 0
+    assert generator.calls == [Path("coros")]
+    assert stdout.getvalue() == "# FIT Report\n" and not stderr.getvalue()
+
+
 def test_run_writes_markdown_to_default_output_file(tmp_path: Path) -> None:
     fit_file = tmp_path / "activity.fit"
     fit_file.write_bytes(b"FIT")

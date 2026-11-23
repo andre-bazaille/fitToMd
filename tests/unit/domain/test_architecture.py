@@ -8,8 +8,11 @@ import pytest
 _PROJECT_PACKAGE = "fit_to_md"
 _DOMAIN_PACKAGE = f"{_PROJECT_PACKAGE}.domain"
 _APPLICATION_PACKAGE = f"{_PROJECT_PACKAGE}.application"
-_DOMAIN_CONTEXTS = frozenset({"activity", "privacy", "reporting"})
+_DOMAIN_CONTEXTS = frozenset(
+    {"activity", "coros_connection", "privacy", "reporting", "synchronization"}
+)
 _ALLOWED_CONTEXT_DEPENDENCIES = frozenset({("reporting", "activity")})
+_ADAPTER_MODULES = ("sqlite3", "portalocker", "http", "urllib", "socket", "webbrowser")
 
 
 def _is_module_or_child(imported_name: str, package_name: str) -> bool:
@@ -53,6 +56,11 @@ def _imported_names(
 
 def _dependency_violation(importer: str, imported_name: str) -> str | None:
     if _is_module_or_child(importer, _DOMAIN_PACKAGE):
+        importer_context = _domain_context(importer)
+        if importer_context in {"coros_connection", "synchronization"} and any(
+            _is_module_or_child(imported_name, module) for module in _ADAPTER_MODULES
+        ):
+            return f"the {importer_context} context may not depend on adapters"
         imported_root = imported_name.partition(".")[0]
         if imported_root in sys.stdlib_module_names:
             return None
@@ -63,7 +71,6 @@ def _dependency_violation(importer: str, imported_name: str) -> str | None:
                 return "domain code may depend only on domain modules"
             return "domain code may depend only on the standard library"
 
-        importer_context = _domain_context(importer)
         imported_context = _domain_context(imported_name)
         if (
             importer_context is not None
@@ -79,6 +86,30 @@ def _dependency_violation(importer: str, imported_name: str) -> str | None:
         return None
 
     if _is_module_or_child(importer, _APPLICATION_PACKAGE):
+        if importer == f"{_APPLICATION_PACKAGE}.synchronization_discovery" and (
+            _domain_context(imported_name) == "coros_connection"
+            or any(
+                _is_module_or_child(imported_name, module)
+                for module in (*_ADAPTER_MODULES, "tzlocal")
+            )
+        ):
+            return "discovery may not depend on the COROS session or its adapters"
+        if importer in {
+            f"{_APPLICATION_PACKAGE}.synchronization_storage",
+            f"{_APPLICATION_PACKAGE}.synchronization_quota",
+        } and any(
+            _is_module_or_child(imported_name, module)
+            for module in ("sqlite3", "portalocker")
+        ):
+            return "synchronization storage ports may not depend on storage adapters"
+        if importer == f"{_APPLICATION_PACKAGE}.synchronization_acquisition" and (
+            _domain_context(imported_name) in {"activity", "reporting"}
+            or any(
+                _is_module_or_child(imported_name, module)
+                for module in (*_ADAPTER_MODULES, "fitdecode")
+            )
+        ):
+            return "FIT acquisition may not depend on conversion or adapters"
         if imported_name == _PROJECT_PACKAGE or any(
             _is_module_or_child(imported_name, allowed_package)
             for allowed_package in (_APPLICATION_PACKAGE, _DOMAIN_PACKAGE)
@@ -150,6 +181,41 @@ def _module_name(source_file: Path, package_root: Path) -> str:
             "from fit_to_md.domain.reporting.ports import ReportRenderer\n",
             False,
         ),
+        (
+            "fit_to_md.application.synchronization",
+            "from fit_to_md.domain.synchronization.periods import DiscoveryExecution\n",
+            False,
+        ),
+        (
+            "fit_to_md.application.synchronization",
+            "from fit_to_md.domain.coros_connection import CorosAccount\n",
+            False,
+        ),
+        (
+            "fit_to_md.application.synchronization_storage",
+            "from fit_to_md.domain.synchronization.model import TrackedActivity\n",
+            False,
+        ),
+        (
+            "fit_to_md.application.synchronization_quota",
+            "from fit_to_md.domain.synchronization.quota import DailyCalls\n",
+            False,
+        ),
+        (
+            "fit_to_md.application.synchronization_discovery",
+            "from fit_to_md.domain.synchronization.planning import CatalogDiscovery\n",
+            False,
+        ),
+        (
+            "fit_to_md.application.synchronization_acquisition",
+            "from fit_to_md.application.synchronization_storage import OutputStorage\n",
+            False,
+        ),
+        (
+            "fit_to_md.domain.synchronization.planning",
+            "from zoneinfo import ZoneInfo\nfrom .model import Reference\n",
+            False,
+        ),
     ),
 )
 def test_checker_allows_supported_dependencies(
@@ -164,6 +230,101 @@ def test_checker_allows_supported_dependencies(
 @pytest.mark.parametrize(
     ("module_name", "source", "expected_import"),
     (
+        (
+            "fit_to_md.domain.synchronization.entities",
+            "from ..activity.entities import Activity\n",
+            "fit_to_md.domain.activity.entities",
+        ),
+        (
+            "fit_to_md.domain.synchronization.entities",
+            "from ..coros_connection import Session\n",
+            "fit_to_md.domain.coros_connection",
+        ),
+        (
+            "fit_to_md.domain.coros_connection",
+            "from .synchronization.model import AccountIdentity\n",
+            "fit_to_md.domain.synchronization.model",
+        ),
+        (
+            "fit_to_md.domain.coros_connection",
+            "from webbrowser import open\n",
+            "webbrowser",
+        ),
+        (
+            "fit_to_md.application.coros_connection",
+            "from fit_to_md.infrastructure.coros_vault import VaultConnectionStore\n",
+            "fit_to_md.infrastructure.coros_vault",
+        ),
+        (
+            "fit_to_md.domain.synchronization.planning",
+            "from ..reporting.entities import FitReport\n",
+            "fit_to_md.domain.reporting.entities",
+        ),
+        (
+            "fit_to_md.domain.synchronization.planning",
+            "from sqlite3 import Connection\n",
+            "sqlite3",
+        ),
+        (
+            "fit_to_md.domain.synchronization.planning",
+            "from http.client import HTTPSConnection\n",
+            "http.client",
+        ),
+        (
+            "fit_to_md.application.synchronization",
+            "from fit_to_md.infrastructure.coros_gateway import Gateway\n",
+            "fit_to_md.infrastructure.coros_gateway",
+        ),
+        (
+            "fit_to_md.application.synchronization_storage",
+            "from sqlite3 import Connection\n",
+            "sqlite3",
+        ),
+        (
+            "fit_to_md.application.synchronization_storage",
+            "import portalocker\n",
+            "portalocker",
+        ),
+        (
+            "fit_to_md.application.synchronization_quota",
+            "import sqlite3\n",
+            "sqlite3",
+        ),
+        (
+            "fit_to_md.application.synchronization_discovery",
+            "from fit_to_md.domain.coros_connection import Session\n",
+            "fit_to_md.domain.coros_connection",
+        ),
+        (
+            "fit_to_md.application.synchronization_discovery",
+            "from urllib.request import Request\n",
+            "urllib.request",
+        ),
+        (
+            "fit_to_md.application.synchronization_acquisition",
+            "from fitdecode import FitReader\n",
+            "fitdecode",
+        ),
+        (
+            "fit_to_md.application.synchronization_acquisition",
+            "from fit_to_md.domain.reporting.ports import ReportRenderer\n",
+            "fit_to_md.domain.reporting.ports",
+        ),
+        (
+            "fit_to_md.domain.synchronization.quota",
+            "from ..coros_connection import Session\n",
+            "fit_to_md.domain.coros_connection",
+        ),
+        (
+            "fit_to_md.application.synchronization_storage",
+            "from fit_to_md.infrastructure.synchronization.output import SqliteOutput\n",
+            "fit_to_md.infrastructure.synchronization.output",
+        ),
+        (
+            "fit_to_md.domain.reporting.services",
+            "from ..synchronization.entities import RemoteActivity\n",
+            "fit_to_md.domain.synchronization.entities",
+        ),
         (
             "fit_to_md.domain.reporting.services",
             "from fit_to_md.application.use_cases import GenerateReport\n",

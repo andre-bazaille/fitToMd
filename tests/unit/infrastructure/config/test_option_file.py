@@ -63,3 +63,10 @@ def test_load_option_file_accepts_workout_options_with_normalized_keys(
         "workout-report": "laps",
         "hr-zone-boundaries": "130,145,160,175",
     }
+
+
+def test_load_option_file_rejects_non_utf8_content(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.config"
+    path.write_bytes(b"output = \xff")
+    with pytest.raises(ConfigFileError, match="unable to read configuration file"):
+        load_option_file(path, {"output"})

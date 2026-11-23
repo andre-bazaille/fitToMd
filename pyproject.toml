@@ -15,6 +15,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+coros = [
+    "portalocker>=3.2",
+    "tzlocal>=5",
+    "tzdata>=2025.1; sys_platform == 'win32'",
+    "SecretStorage>=3.3; sys_platform == 'linux'",
+    "keyring>=25; sys_platform == 'win32'",
+]
+coros-probe = [
+    "tzlocal>=5",
+    "tzdata>=2025.1; sys_platform == 'win32'",
+    "SecretStorage>=3.3; sys_platform == 'linux'",
+    "keyring>=25; sys_platform == 'win32'",
+]
 dev = [
     "mypy>=1.15.0",
     "pytest>=8.0.0",
@@ -25,6 +38,7 @@ dev = [
 [project.scripts]
 fit-to-md = "fit_to_md.cli:main"
 fit-sanitize = "fit_to_md.sanitize_cli:main"
+fit-coros-probe = "fit_to_md.coros_probe_cli:main"
 
 [tool.pytest.ini_options]
 addopts = "--cov=fit_to_md --cov-branch --cov-report=term-missing --cov-fail-under=80"

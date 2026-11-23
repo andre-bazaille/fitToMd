@@ -12,7 +12,7 @@ def load_option_file(path: Path, allowed_options: Iterable[str]) -> dict[str, st
     allowed = set(allowed_options)
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as error:
+    except (OSError, UnicodeError) as error:
         raise ConfigFileError(
             f"unable to read configuration file {path}: {error}"
         ) from error

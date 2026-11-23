@@ -1,6 +1,4 @@
-import re
-import warnings
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from math import isfinite
@@ -25,6 +23,7 @@ from fit_to_md.domain.activity.timeline import (
     TimerTransition,
     build_active_timeline,
 )
+from fit_to_md.infrastructure.fitdecode.frames import compatible_frames
 from fit_to_md.infrastructure.fitdecode.workout import attach_workout_metadata
 
 
@@ -73,7 +72,7 @@ class FitdecodeActivityReader:
         sub_sport: str | None = None
 
         with self._reader_factory(str(source)) as fit_file:
-            for frame in _compatible_frames(fit_file):
+            for frame in compatible_frames(fit_file):
                 if getattr(frame, "frame_type", None) != fitdecode.FIT_FRAME_DATA:
                     continue
 
@@ -164,44 +163,6 @@ class FitdecodeActivityReader:
                 invalid_events=invalid_workout_events,
             ),
         )
-
-
-def _compatible_frames(fit_file: Any) -> Iterator[Any]:
-    """Accept the known short COROS event payload, preserving other warnings."""
-    frames = iter(fit_file)
-    while True:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            frame = next(frames, None)
-        short_event_data = (
-            frame is not None
-            and getattr(frame, "frame_type", None) == fitdecode.FIT_FRAME_DEFINITION
-            and frame.name == "event"
-            and any(
-                field.def_num == 3
-                and field.size == 1
-                and field.base_type.name == "byte"
-                for field in frame.field_defs
-            )
-        )
-        for warning in caught:
-            if (
-                short_event_data
-                and len(caught) == 1
-                and warning.category is UserWarning
-                and re.fullmatch(
-                    r"invalid field size 1 in definition message @ \d+ "
-                    r"for type uint32 \(expected a multiple of 4\)",
-                    str(warning.message),
-                )
-            ):
-                continue
-            warnings.warn_explicit(
-                warning.message, warning.category, warning.filename, warning.lineno
-            )
-        if frame is None:
-            return
-        yield frame
 
 
 def _parse_weather_observation(frame: Any) -> WeatherObservation | None:
