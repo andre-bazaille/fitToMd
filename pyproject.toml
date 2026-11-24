@@ -43,7 +43,7 @@ fit-coros-probe = "fit_to_md.coros_probe_cli:main"
 [tool.pytest.ini_options]
 addopts = "--cov=fit_to_md --cov-branch --cov-report=term-missing --cov-fail-under=80"
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = ["src", "."]
 
 [tool.coverage.run]
 branch = true

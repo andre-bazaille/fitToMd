@@ -1,3 +1,8 @@
+## 2026-11-24
+
+- Configured pytest to import `fit_to_md` from the working tree and added a
+  regression test that checks the package source path.
+
 ## 2026-11-22
 
 - Translated the [COROS sync guide](docs/coros-sync-guide.md) into English.

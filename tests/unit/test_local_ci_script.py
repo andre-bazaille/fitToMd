@@ -4,8 +4,17 @@ import os
 import subprocess
 from pathlib import Path
 
+import fit_to_md
+
 PROJECT_DIRECTORY = Path(__file__).parents[2]
 CI_SCRIPT = PROJECT_DIRECTORY / "ci.sh"
+
+
+def test_pytest_imports_fit_to_md_from_the_working_tree() -> None:
+    expected_source = PROJECT_DIRECTORY / "src" / "fit_to_md" / "__init__.py"
+
+    assert fit_to_md.__file__ is not None
+    assert Path(fit_to_md.__file__).resolve() == expected_source.resolve()
 
 
 def test_local_ci_script_runs_all_quality_checks(tmp_path: Path) -> None:
