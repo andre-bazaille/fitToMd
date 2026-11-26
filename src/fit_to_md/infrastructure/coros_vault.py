@@ -4,12 +4,13 @@ import json
 import math
 import re
 import sys
-from contextlib import closing
+from contextlib import closing, suppress
 from dataclasses import asdict
 from importlib import import_module
 from pathlib import Path
 from types import ModuleType
 from typing import Protocol, cast
+from uuid import uuid4
 
 from fit_to_md.application.synchronization_quota import QuotaBinding, QuotaUnavailable
 from fit_to_md.application.synchronization_storage import VaultReference
@@ -29,6 +30,10 @@ _QUOTA_SERVICE = "fit-to-md/coros/quota/"
 _ENTRY = "session"
 _SCHEMA_VERSION = 1
 _WINDOWS_BLOB_LIMIT = 2560
+_WINDOWS_PART_SIZE = _WINDOWS_BLOB_LIMIT // 2
+_WINDOWS_MAX_PARTS = 64
+_WINDOWS_PART_PREFIX = _CONNECTION_SERVICE + "/parts/"
+_WINDOWS_MANIFEST = re.compile(r"parts:([0-9a-f]{32}):([1-9][0-9]?)")
 _SECRET_SERVICE_INTERFACE = "org.freedesktop.Secret."
 
 
@@ -39,7 +44,9 @@ def _production_service(service: str) -> bool:
 class VaultBackend(Protocol):
     def get_password(self, service: str, username: str) -> str | None: ...
     def set_password(self, service: str, username: str, password: str) -> None: ...
-    def delete_password(self, service: str, username: str) -> None: ...
+    def delete_password(self, service: str, username: str) -> None:
+        """Delete the credential if present."""
+        ...
 
 
 class _SecretService:
@@ -158,13 +165,87 @@ class _WindowsVault:
         self._credentials = credentials
 
     def get_password(self, service: str, username: str) -> str | None:
-        return self._backend.get_password(service, username)
+        value = self._backend.get_password(service, username)
+        if service != _CONNECTION_SERVICE:
+            return value
+
+        # Status and account inspection can read while a writer replaces the session.
+        for _ in range(3):
+            if value is None or not value.startswith("parts:"):
+                return value
+            manifest = _WINDOWS_MANIFEST.fullmatch(value)
+            if manifest is None or int(manifest[2]) > _WINDOWS_MAX_PARTS:
+                break
+            parts = [
+                self._backend.get_password(target, username)
+                for target in self._part_targets(manifest[1], int(manifest[2]))
+            ]
+            if all(parts):
+                return "".join(part for part in parts if part is not None)
+            updated = self._backend.get_password(service, username)
+            if updated == value:
+                break
+            value = updated
+        raise ConnectionFailure(
+            "Could not read the complete COROS session in Windows Credential Manager. "
+            "If the error persists, run 'fit-to-md coros logout' and log in again."
+        )
 
     def set_password(self, service: str, username: str, password: str) -> None:
         if not _production_service(service):
             self._backend.set_password(service, username, password)
             return
 
+        if service == _CONNECTION_SERVICE:
+            self._save_connection(username, password)
+        else:
+            self._write(service, username, password)
+
+    def _save_connection(self, username: str, value: str) -> None:
+        # Connection JSON is ASCII, so each character takes two bytes in CredWrite.
+        targets: list[str] = []
+        if len(value) > _WINDOWS_PART_SIZE:
+            parts = [
+                value[start : start + _WINDOWS_PART_SIZE]
+                for start in range(0, len(value), _WINDOWS_PART_SIZE)
+            ]
+            if len(parts) > _WINDOWS_MAX_PARTS:
+                raise ConnectionFailure("The COROS session is too large to store.")
+            generation = uuid4().hex
+            targets = self._part_targets(generation, len(parts))
+            for target, part in zip(targets, parts, strict=True):
+                self._write(target, username, part)
+            value = f"parts:{generation}:{len(parts)}"
+
+        # Publish only after every part is saved. Writers hold the connection lock.
+        self._write(_CONNECTION_SERVICE, username, value)
+        # Cleanup can be retried on the next save or logout. The new record is committed.
+        with suppress(Exception):
+            self._delete_parts(username, keep=set(targets))
+
+    @staticmethod
+    def _part_targets(generation: str, count: int) -> list[str]:
+        return [f"{_WINDOWS_PART_PREFIX}{generation}/{index}" for index in range(count)]
+
+    def _delete_parts(self, username: str, *, keep: set[str]) -> None:
+        credentials = self._credentials
+        try:
+            entries = credentials.CredEnumerate(_WINDOWS_PART_PREFIX + "*", 0)
+        except Exception as error:
+            if getattr(error, "winerror", None) == 1168:  # ERROR_NOT_FOUND
+                return
+            raise
+        for entry in entries or ():
+            target = entry["TargetName"]
+            if (
+                entry["Type"] == credentials.CRED_TYPE_GENERIC
+                and entry["UserName"] == username
+                and target.startswith(_WINDOWS_PART_PREFIX)
+                and target not in keep
+            ):
+                self._backend.delete_password(target, username)
+
+    def _write(self, service: str, username: str, password: str) -> None:
         # Keyring's multi-user collision handling can back up the old password
         # under a second target. Each production entry has its own target.
         credentials = self._credentials
@@ -180,7 +261,10 @@ class _WindowsVault:
         )
 
     def delete_password(self, service: str, username: str) -> None:
-        self._backend.delete_password(service, username)
+        if self._backend.get_password(service, username) is not None:
+            self._backend.delete_password(service, username)
+        if service == _CONNECTION_SERVICE:
+            self._delete_parts(username, keep=set())
 
 
 class _VaultEntry:
@@ -208,8 +292,7 @@ class _VaultEntry:
 
     def clear(self) -> None:
         try:
-            if self._backend.get_password(self._service, _ENTRY) is not None:
-                self._backend.delete_password(self._service, _ENTRY)
+            self._backend.delete_password(self._service, _ENTRY)
         except ConnectionFailure:
             raise
         except Exception:
@@ -308,13 +391,6 @@ class VaultConnectionStore:
         value = json.dumps(
             {"version": _SCHEMA_VERSION, **asdict(record)}, separators=(",", ":")
         )
-        if (
-            sys.platform == "win32"
-            and len(value.encode("utf-16-le")) > _WINDOWS_BLOB_LIMIT
-        ):
-            raise ConnectionFailure(
-                "The COROS session exceeds the Windows Credential Manager limit (2560 bytes)."
-            )
         self._entry.write(value)
 
     def clear(self) -> None:

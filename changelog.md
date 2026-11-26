@@ -1,3 +1,12 @@
+## 2026-11-26
+
+- Fixed Windows COROS login for sessions larger than one Credential Manager
+  entry. The Windows vault stages the new session before replacing the current
+  one and removes all session parts on logout.
+- Recorded the Windows offline tests, live COROS login, session reuse and
+  renewal on Linux and Windows, and the Training Hub comparison for one FIT
+  file in the L9 checklist.
+
 ## 2026-11-24
 
 - Configured pytest to import `fit_to_md` from the working tree and added a

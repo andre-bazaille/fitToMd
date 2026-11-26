@@ -28,7 +28,7 @@ from fit_to_md.domain.coros_connection import (
 )
 from fit_to_md.domain.synchronization.model import ActivityIdentity
 from fit_to_md.domain.synchronization.quota import ServerFitQuotaExceeded
-from fit_to_md.infrastructure import coros_gateway, coros_vault
+from fit_to_md.infrastructure import coros_gateway
 from fit_to_md.infrastructure.coros_gateway import (
     CorosGateway,
     HttpsTransport,
@@ -416,32 +416,6 @@ def test_invalid_vault_record_fails_closed_but_can_be_removed(
     assert backend.values[PRODUCTION_SLOT] == value
     store.clear()
     assert store.load() is None
-
-
-def test_windows_blob_limit_counts_utf16_bytes_and_preserves_current_record(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(coros_vault, "sys", SimpleNamespace(platform="win32"))
-    backend = FakeVault()
-    store = VaultConnectionStore(backend)
-    store.save(ORIGINAL)
-    used = len(backend.values[PRODUCTION_SLOT].encode("utf-16-le"))
-    boundary_token = ORIGINAL.session.refresh_token + "s" * ((2560 - used) // 2)
-    boundary = replace(
-        ORIGINAL, session=replace(ORIGINAL.session, refresh_token=boundary_token)
-    )
-    for state in Verification:
-        store.save(replace(boundary, verification=state))
-        assert len(backend.values[PRODUCTION_SLOT].encode("utf-16-le")) == 2560
-    previous = backend.values[PRODUCTION_SLOT]
-    with pytest.raises(ConnectionFailure, match="Windows Credential Manager limit"):
-        store.save(
-            replace(
-                boundary,
-                session=replace(boundary.session, refresh_token=boundary_token + "s"),
-            )
-        )
-    assert backend.values[PRODUCTION_SLOT] == previous
 
 
 def test_cli_dispatches_login_status_logout_to_production(

@@ -77,4 +77,6 @@ class FakeVault:
         self.values[service, username] = password
 
     def delete_password(self, service: str, username: str) -> None:
-        del self.values[service, username]
+        if not self.available:
+            raise OSError("private backend error")
+        self.values.pop((service, username), None)

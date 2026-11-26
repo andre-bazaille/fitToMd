@@ -2,7 +2,7 @@
 
 **Créé le :** 17 novembre 2026  
 **Référence :** [spécification fonctionnelle v1.8](coros-sync-functional-specification.md)  
-**État :** L1 livré. L2 à L8 sont implémentés. Le parcours complet et la restauration sont validés hors ligne sous Linux. Le guide d’exploitation est disponible. La qualification réelle de L2, la validation Windows et les frontières de minuit restent ouvertes. L0 reste partiellement qualifié.
+**État :** L1 livré. L2 à L8 sont implémentés. Le parcours complet et la restauration sont validés hors ligne sous Linux. Le guide d’exploitation est disponible. La connexion de production, la reprise sans invite et le renouvellement sont validés sur Linux et Windows. Le changement de compte, les frontières de minuit et la restauration sur une autre machine restent ouverts. L0 reste partiellement qualifié.
 
 Ce document détaille les quatre étapes de livraison de la section 15 de la
 spécification en lots intégrables et vérifiables. La spécification reste la
@@ -28,14 +28,14 @@ parcours qui en dépend ; les tests avec ports simulés peuvent être préparés
 | --- | --- | --- | --- | --- |
 | L0 | Décisions techniques et contrats encore ouverts | Aucune | En cours | [Note L0](coros-sync-technical-decisions.md) ; preuves réelles partielles, minuit non qualifié |
 | L1 | Contexte Synchronisation et règles de sélection | L0 : contrats internes | Terminé | [Validation L1](#l1--modèle-métier-périodes-et-sélection) |
-| L2 | Connexion de production et identité du compte | L0 : identité, dépendances | En cours | [Validation L2](#l2--connexion-de-production-et-compte) disponible. Qualification réelle ouverte. |
+| L2 | Connexion de production et identité du compte | L0 : identité, dépendances | En cours | [Connexion, reprise et renouvellement validés](#l2--connexion-de-production-et-compte). Changement de compte à vérifier. |
 | L3 | Registre, fichiers et verrouillage | L1, L2 : identité | En cours | [Validation L3](#l3--persistance-intégrité-des-fichiers-et-exclusion-concurrente) sous Linux. CI Windows à vérifier. |
 | L4 | Quota partagé entre dossiers | L2, L3, décision de récupération L0 | Terminé hors ligne | [Validation L4](#l4--budget-fit-partagé-et-compteurs) sous Linux |
 | L5 | Catalogue et prévisualisation du plan de synchronisation | L1, L2, validation des dates L0 | Terminé hors ligne | [Validation L5](#l5--découverte-et-prévisualisation) sous Linux |
 | L6 | Acquisition bornée et téléchargement seul | L3, L4, L5 | Terminé hors ligne | [Validation L6](#l6--acquisition-bornée-et-téléchargement-seul) sous Linux |
 | L7 | Incrémental, reprise et réconciliation | L6 | Terminé hors ligne | [Validation L7](#l7--référence-incrémentale-et-reprise-après-interruption) sous Linux |
 | L8 | Conversion et parcours CLI complet | L7 | Terminé hors ligne | [Validation L8](#l8--conversion-configuration-et-restitution-cli) sous Linux |
-| L9 | Qualification Linux/Windows et documentation | L8 | En cours | [Guide d’exploitation](coros-sync-guide.md) et [preuves Linux](#preuves-hors-ligne-et-qualification-restante) |
+| L9 | Qualification Linux/Windows et documentation | L8 | En cours | [Guide d’exploitation](coros-sync-guide.md) et [preuves Linux et Windows](#preuves-hors-ligne-et-qualification-restante) |
 
 **Jalons de livraison :**
 
@@ -184,7 +184,7 @@ avec `portalocker` vérifie aussi le verrou entre deux processus.
 
 **AC :** 20, 28, 39 (connexion).
 
-**Qualification réelle à exécuter avec un compte autorisé sur Linux et Windows.**
+**Protocole de qualification réelle avec un compte autorisé sur Linux et Windows.**
 
 1. Installer `python -m pip install '.[coros]'`. Exécuter `fit-to-md coros login`
    avec la région du compte, fermer le terminal, puis exécuter `fit-to-md coros status`
@@ -193,10 +193,11 @@ avec `portalocker` vérifie aussi le verrou entre deux processus.
    nouveaux processus, d’abord sans argument, puis avec `--refresh`, puis sans
    argument. Aucun de ces appels ne doit ouvrir le navigateur ni demander le
    déverrouillage. Les trois empreintes doivent correspondre et la deuxième
-   exécution doit enregistrer le jeton de renouvellement remplacé. Sous Windows, relever la
-   taille UTF-16 à chaque exécution et vérifier qu’elle reste dans la limite de
-   2 560 octets. Si la connexion ou le renouvellement échoue sur cette limite,
-   consigner l’échec de qualification Windows.
+   exécution doit enregistrer le jeton de renouvellement remplacé. Sous Windows,
+   relever la taille UTF-16 de la session reconstituée. Au-delà de 2 560 octets,
+   elle est répartie entre plusieurs entrées du Gestionnaire d’identifiants.
+   Vérifier que la reprise et la rotation réussissent même au-delà de cette
+   taille, puis que `logout` supprime les entrées de session.
 3. Avec un second compte autorisé de la même région, vérifier qu’un nouveau
    `login` avant `logout` est refusé et que la première session reste utilisable.
    Faire `logout`, vérifier que `status` indique l’absence de session, puis
@@ -238,7 +239,7 @@ if sys.argv[1:] == ["--refresh"]:
 if sys.platform == "win32":
     value = backend.get_password("fit-to-md/coros/connection", "session")
     assert value is not None
-    print(f"Credential size: {len(value.encode('utf-16-le'))} bytes")
+    print(f"Reassembled session size: {len(value.encode('utf-16-le'))} bytes")
 ```
 
 ### L3 — Persistance, intégrité des fichiers et exclusion concurrente
@@ -436,12 +437,17 @@ un conflit et conserve le fichier.
 
 - [x] Exécuter `./ci.sh` et vérifier les scénarios hors ligne sous Linux (DST,
   chemins, trousseau simulé, concurrence et interruption).
-- [ ] Exécuter les scénarios hors ligne sous Windows sur la version à livrer.
-- [ ] Qualifier réellement login, reprise sans invite, renouvellement et trousseau
-  sur les deux OS ; vérifier la séparation après reconnexion avec un autre compte.
-- [ ] Comparer localement le FIT témoin à l’export Training Hub et documenter les
-  écarts éventuels ; vérifier d’autres plages et les ensembles d’identités lorsque possible.
-- [ ] Vérifier les frontières dates/fuseaux contre Training Hub.
+- [x] Exécuter les scénarios hors ligne sous Windows.
+- [x] Qualifier sous Windows le login réel, la reprise sans invite et le
+  renouvellement de la session de production avec le trousseau système.
+- [x] Qualifier sous Linux le login réel, la reprise sans invite et le
+  renouvellement de la session de production avec le trousseau système.
+- [ ] Vérifier la séparation après reconnexion avec un autre compte sur les deux
+  OS. Essai en attente d’un second compte autorisé.
+- [x] Comparer localement le FIT témoin à l’export Training Hub.
+- [ ] Comparer les ensembles d’identités sur d’autres plages lorsque possible.
+- [ ] Vérifier les frontières dates/fuseaux contre Training Hub. Essai en attente
+  d’activités proches de minuit.
 - [x] Vérifier hors ligne le refus d’une journée saturée.
 - [x] Documenter installation/dépendances, commandes, codes de sortie, budget,
   imports tardifs, limites du catalogue et erreurs de connexion.
@@ -472,16 +478,22 @@ un conflit et conserve le fichier.
   Les tests automatisés couvrent le rollback de migration, le journal SQLite
   interrompu et le [refus d’un quota perdu ou incohérent](../tests/unit/infrastructure/synchronization/test_quota_storage.py).
 - Windows (AC‑39). Le [workflow CI](../.github/workflows/ci.yml) prévoit des
-  tests de nommage, registre, publication et concurrence. Consigner un résultat
-  Windows sur la révision à livrer et compléter la couverture des périodes/DST,
-  du trousseau simulé et des interruptions CLI. Ajouter les essais réels de
-  connexion, reprise sans invite, renouvellement et changement de compte sur
-  Linux et Windows. Le prototype L0 apporte une preuve partielle sous Linux.
-- Training Hub. Comparer un FIT témoin au fichier exporté pour la même activité.
-  Si les empreintes diffèrent, comparer sessions, enregistrements, tours, pauses
-  et Markdown. Sur d’autres plages, comparer les ensembles d’activités et
-  vérifier les bornes près de minuit dans deux fuseaux. Consigner les résultats
-  anonymisés dans le journal, selon le [protocole L0](coros-sync-technical-decisions.md).
+  tests de nommage, registre, publication et concurrence. Les essais ciblés sur
+  le correctif couvrent aussi les périodes et le DST, le trousseau simulé et
+  les interruptions CLI. Le prototype L0 apporte une preuve partielle sous Linux.
+  Le 26 novembre 2026, les scénarios hors ligne Windows ont été signalés réussis.
+  Le premier login réel a échoué car la session dépassait 2 560 octets.
+  La session peut désormais être répartie entre plusieurs entrées du trousseau.
+  Après correction, l’utilisateur a confirmé sous Windows le login réel, la
+  reprise sans invite et le renouvellement forcé de la session de production.
+  L’utilisateur a également confirmé que ces essais avaient déjà été réalisés
+  avec la CLI de production sous Linux. La séparation après changement de compte
+  reste à vérifier sur un second compte autorisé.
+- Training Hub. L’utilisateur a confirmé la comparaison locale d’un FIT témoin
+  avec l’export de la même activité. La comparaison des ensembles d’activités
+  sur d’autres plages reste à documenter. Les bornes de dates dans deux fuseaux
+  restent à vérifier lorsque des activités proches de minuit seront disponibles.
+  Consigner les résultats anonymisés selon le [protocole L0](coros-sync-technical-decisions.md).
 
 **Sortie :** V1 livrable sur Linux et Windows. Les limites serveur non établies
 restent documentées et couvertes par les comportements conservateurs validés.
@@ -520,7 +532,7 @@ pour la qualification manuelle, le lien vers un compte rendu sans données priv�
 | 36 | L7 | L1, L8 | [x] hors ligne | [Référence explicite et incrémentale](../tests/unit/cli/test_coros_download.py) |
 | 37 | L8 | L3 | [x] hors ligne | [Rapport édité et révision distante ignorée](../tests/unit/cli/test_coros_download.py) |
 | 38 | L9 | L3, L4, L7 | [x] hors ligne sous Linux | [Restauration, rollback et refus d’un registre inutilisable](#preuves-hors-ligne-et-qualification-restante) |
-| 39 | L9 | L0, L2, L3 | [ ] Windows et trousseaux réels | [Preuves Linux et vérifications restantes](#preuves-hors-ligne-et-qualification-restante) |
+| 39 | L9 | L0, L2, L3 | [ ] Frontières de dates en conditions réelles | [Preuves Linux et Windows et vérifications restantes](#preuves-hors-ligne-et-qualification-restante) |
 
 ## 5. Journal de suivi
 
@@ -535,3 +547,4 @@ pour la qualification manuelle, le lien vers un compte rendu sans données priv�
 | 2026-11-21 | L7 implémenté | Référence incrémentale et reprise après interruption validées hors ligne sous Linux. | [Validation L7](#l7--référence-incrémentale-et-reprise-après-interruption) |
 | 2026-11-22 | L8 implémenté | Synchronisation avec rapports, configuration partagée et suivi d’output validés hors ligne sous Linux. | [Validation L8](#l8--conversion-configuration-et-restitution-cli) |
 | 2026-11-22 | L9 documentation et restauration | Guide publié dans le dépôt. Suite Linux et restauration locale avec adaptateurs simulés réussies. Qualification Windows et essais réels ouverts. | [Guide](coros-sync-guide.md) et [preuves L9](#preuves-hors-ligne-et-qualification-restante) |
+| 2026-11-26 | L9 qualification partielle | Login, reprise sans invite et renouvellement de production réussis sous Linux et Windows. Comparaison du FIT témoin réussie. Second compte et frontières de minuit en attente. | [Preuves L9](#preuves-hors-ligne-et-qualification-restante) |
