@@ -73,9 +73,14 @@ class ConvertSynchronizationReports:
             return
 
         assert entry.paths is not None
-        registry.record_conversion_attempt(identity, self._clock.now(), self._options)
-        self._progress(activity, "Converting local FIT…")
         try:
+            if self._output.recover_report(entry):
+                self.reused += 1
+                return
+            registry.record_conversion_attempt(
+                identity, self._clock.now(), self._options
+            )
+            self._progress(activity, "Converting local FIT…")
             self._output.files.require_available(entry.paths.report)
             source = self._output.files.local_fit(entry.paths.fit)
             generated = self._generator.execute_detailed(source)

@@ -1,11 +1,13 @@
 import base64
 import json
+import sqlite3
 import struct
 import subprocess
 import sys
-from contextlib import nullcontext
+from contextlib import closing, nullcontext
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from hashlib import sha256
 from io import BytesIO, StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -1475,40 +1477,176 @@ def test_report_collision_preserves_foreign_file_and_can_resume(
     assert len(state["transport"].requests) == 2 and occupied.exists()
 
 
-@pytest.mark.parametrize("after_publication", [False, True])
-def test_conversion_interrupt_preserves_fit_and_any_published_report(
-    coros: CorosFixture, monkeypatch: pytest.MonkeyPatch, after_publication: bool
+@pytest.mark.parametrize("checkpoint", ["before", "after", "replaced", "directory"])
+def test_conversion_resumes_after_interrupted_report_publication(
+    coros: CorosFixture, monkeypatch: pytest.MonkeyPatch, checkpoint: str
 ) -> None:
     _, state, quotas, output = coros
     quotas.initialize(ACCOUNT)
 
-    def interrupt(*_):
+    def interrupt(*_: object) -> None:
         raise KeyboardInterrupt
 
+    staged_digests: list[str] = []
+
+    def interrupt_rename(source: Path, destination: Path) -> None:
+        if destination.suffix == ".md":
+            assert source.is_file() and not destination.exists()
+            staged_digests.append(sha256(source.read_bytes()).hexdigest())
+            raise KeyboardInterrupt
+        rename(source, destination)
+
+    rename = files.rename_new
     row = ("10", 100, FIRST)
     state["transport"] = FakeTransport(INIT, catalogue(row), fit_reply(3))
     with monkeypatch.context() as patch:
-        if after_publication:
-            patch.setattr(SqliteRegistry, "record_converted", interrupt)
+        if checkpoint == "before":
+            patch.setattr(files, "rename_new", interrupt_rename)
         else:
-            patch.setattr(GenerateMarkdownReport, "execute_detailed", interrupt)
-        code, out, err = run_sync(output, "--last-days", "1")
+            patch.setattr(SqliteRegistry, "record_converted", interrupt)
+        code, out, err = run_sync(
+            output, "--last-days", "1", "--workout-report", "laps"
+        )
     assert code == 130 and "FITs downloaded: 1" in out and "command interrupted" in err
     first = entries(output)["10"]
     target = output / first.paths.report
-    assert target.exists() is after_publication
+    assert target.exists() is (checkpoint != "before")
     assert first.tracked.conversion is ConversionState.PENDING
+    assert first.conversion_attempts.count == 1
+    assert first.conversion_options is not None
+    assert first.conversion_options.workout_report == "laps"
+    assert first.report_sha256 is not None
     assert (output / first.paths.fit).read_bytes() == FIT
-    previous = target.read_bytes() if after_publication else None
+
+    previous = target.read_bytes() if target.exists() else None
+    if previous is not None:
+        assert first.report_sha256 == sha256(previous).hexdigest()
+        monkeypatch.setattr(
+            GenerateMarkdownReport,
+            "execute_detailed",
+            lambda *_: pytest.fail("unexpected report generation"),
+        )
+    else:
+        assert staged_digests == [first.report_sha256]
+    if checkpoint == "replaced":
+        target.write_bytes(b"# Replacement\n")
+    elif checkpoint == "directory":
+        target.unlink()
+        target.mkdir()
+
+    conflict = checkpoint in {"replaced", "directory"}
+    state["transport"] = FakeTransport(INIT, catalogue())
+    code, out, _ = run_sync(output, "--dry-run")
+    assert code == 0 and f"Conflicts: {int(conflict)}" in out
+    assert entries(output)["10"] == first
 
     state["transport"] = FakeTransport(INIT, catalogue())
     code, out, err = run_sync(output)
+    final = entries(output)["10"]
     assert len(state["transport"].requests) == 2 and "FITs already available: 1" in out
-    if after_publication:
+    assert final.report_sha256 is None
+    if checkpoint == "before":
+        assert code == 0 and "Reports created: 1" in out and target.is_file()
+        assert final.tracked.conversion is ConversionState.CONVERTED
+        assert final.conversion_attempts.count == 2
+        assert final.conversion_options == replace(
+            first.conversion_options, workout_report="off"
+        )
+    elif conflict:
         assert code == 1 and "already exists" in err
-        assert target.read_bytes() == previous
+        if checkpoint == "replaced":
+            assert target.read_bytes() == b"# Replacement\n"
+        else:
+            assert target.is_dir()
+        assert final.tracked.conversion is ConversionState.FAILED
+        assert final.conversion_attempts.error is FailureReason.CONFLICT
     else:
-        assert code == 0 and "Reports created: 1" in out and target.exists()
+        assert code == 0 and "Reports already available: 1" in out
+        assert "Reports created: 0" in out and target.read_bytes() == previous
+        assert final == replace(
+            first,
+            tracked=replace(first.tracked, conversion=ConversionState.CONVERTED),
+            report_sha256=None,
+        )
+
+        target.write_bytes(b"# Edited after recovery\n")
+        state["transport"] = FakeTransport(INIT, catalogue(row))
+        code, out, _ = run_sync(output, "--last-days", "1")
+        assert code == 0 and "Reports already available: 1" in out
+        assert target.read_bytes() == b"# Edited after recovery\n"
+        assert entries(output)["10"] == final
+
+
+def test_sync_migrates_legacy_registry_and_preserves_existing_reports(
+    coros: CorosFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, state, quotas, output = coros
+    quotas.initialize(ACCOUNT)
+    rows = (("10", 100, FIRST), ("20", 100, SECOND))
+    state["transport"] = FakeTransport(
+        INIT, catalogue(*rows), fit_reply(3), fit_reply(4)
+    )
+    assert sync(output)[0] == 0
+
+    store = SqliteOutput(output)
+    tracked = entries(output)
+    completed, pending = tracked["10"], tracked["20"]
+    with store.write(ACCOUNT, snapshot(output).vault) as opened:
+        opened.publish_report(
+            completed.tracked.activity.identity, "# Original\n", ConversionOptions()
+        )
+    edited = output / completed.paths.report
+    occupied = output / pending.paths.report
+    edited.write_bytes(b"# Edited\n")
+    occupied.write_bytes(b"# Untracked\n")
+
+    database = store.registry_path
+    with closing(sqlite3.connect(database)) as connection, connection:
+        connection.execute("ALTER TABLE activities DROP COLUMN report_sha256")
+        connection.execute("UPDATE schema_version SET version = 1")
+    legacy = database.read_bytes()
+    with pytest.raises(StorageFailure, match="writable migration"), store.read(ACCOUNT):
+        pytest.fail("legacy registry opened without migrating")
+    assert database.read_bytes() == legacy and not list(database.parent.glob("*.bak"))
+
+    monkeypatch.setattr(
+        GenerateMarkdownReport,
+        "execute_detailed",
+        lambda *_: pytest.fail("unexpected report generation"),
+    )
+    state["transport"] = FakeTransport(INIT, catalogue(*rows))
+    code, out, err = run_sync(output, "--last-days", "1")
+    assert code == 1 and "Reports already available: 1" in out
+    assert "Conversion errors: 1" in out and occupied.name in err
+    assert occupied.read_bytes() == b"# Untracked\n"
+    assert edited.read_bytes() == b"# Edited\n"
+    assert len(state["transport"].requests) == 2
+
+    migrated = entries(output)
+    assert migrated["10"].tracked.conversion is ConversionState.CONVERTED
+    assert migrated["20"].conversion_attempts.error is FailureReason.CONFLICT
+    assert all(entry.report_sha256 is None for entry in migrated.values())
+    backups = list(database.parent.glob("*.bak"))
+    assert len(backups) == 1
+    with closing(sqlite3.connect(backups[0])) as backup:
+        assert backup.execute("SELECT version FROM schema_version").fetchone() == (1,)
+        assert backup.execute(
+            "SELECT conversion FROM activities ORDER BY remote_id"
+        ).fetchall() == [("converted",), ("pending",)]
+    with closing(sqlite3.connect(database)) as connection:
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (
+            2,
+        )
+
+    occupied.unlink()
+    digest = sha256(b"# New publication\n").hexdigest()
+    identity = pending.tracked.activity.identity
+    options = ConversionOptions(workout_report="laps")
+    with store.write(ACCOUNT, snapshot(output).vault) as opened:
+        opened.registry.record_report_publication(identity, digest, options)
+    staged = entries(output)["20"]
+    assert staged.tracked.conversion is ConversionState.PENDING
+    assert staged.report_sha256 == digest and staged.conversion_options == options
 
 
 def test_status_reports_tracking_without_network_or_writes(

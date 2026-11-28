@@ -108,7 +108,7 @@ def test_staging_write_failure_cleans_temporary(
         pytest.fail("FIT staged despite filesystem error")
     assert list((tmp_path / "fits").iterdir()) == []
     with pytest.raises(StorageFailure, match="Could not write"):
-        storage.publish_report(REPORT_PATH, "example")
+        storage.publish_report(REPORT_PATH, b"example")
     assert list(tmp_path.iterdir()) == [tmp_path / "fits"]
 
 
@@ -124,7 +124,7 @@ def test_report_late_collision_cleans_temp_and_preserves_destination(
 
     monkeypatch.setattr(files, "rename_new", late_file)
     with pytest.raises(OutputConflict):
-        LocalOutputFiles(tmp_path).publish_report(REPORT_PATH, "# new report")
+        LocalOutputFiles(tmp_path).publish_report(REPORT_PATH, b"# new report")
     destination = tmp_path / REPORT_PATH
     assert destination.read_bytes() == b"manual report"
     assert list(tmp_path.iterdir()) == [destination]
@@ -133,7 +133,7 @@ def test_report_late_collision_cleans_temp_and_preserves_destination(
 def test_files_refuse_a_path_outside_output(tmp_path: Path) -> None:
     with pytest.raises(StorageFailure, match="Invalid path"):
         LocalOutputFiles(tmp_path).publish_report(
-            PurePosixPath("../escape.md"), "report"
+            PurePosixPath("../escape.md"), b"report"
         )
     assert list(tmp_path.iterdir()) == []
 
@@ -157,5 +157,5 @@ def test_unsupported_volume_fails_without_falling_back_to_replace(
         lambda *args, **kwargs: SimpleNamespace(renameat2=unsupported),
     )
     with pytest.raises(StorageFailure, match="volume does not support atomic"):
-        LocalOutputFiles(tmp_path).publish_report(REPORT_PATH, "report")
+        LocalOutputFiles(tmp_path).publish_report(REPORT_PATH, b"report")
     assert list(tmp_path.iterdir()) == []

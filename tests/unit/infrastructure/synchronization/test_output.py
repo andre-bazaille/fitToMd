@@ -3,6 +3,7 @@ import subprocess
 import sys
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
+from os import environ
 from pathlib import Path
 from time import monotonic, sleep
 from zoneinfo import ZoneInfo
@@ -353,6 +354,35 @@ def test_late_collision_never_overwrites_or_records_foreign_fit(
     assert list(final.parent.iterdir()) == [final]
 
 
+def test_late_report_collision_discards_digest_even_when_bytes_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = activity()
+    markdown = "# Sortie à vélo\n"
+    contents = markdown.encode("utf-8")
+    rename = files.rename_new
+
+    def late_file(temporary: Path, destination: Path) -> None:
+        assert temporary.read_bytes() == contents
+        destination.write_bytes(contents)
+        rename(temporary, destination)
+
+    with SqliteOutput(tmp_path).write(ACCOUNT, VAULT) as opened:
+        opened.registry.save_discovery((source,), discovered_at=T, complete=True)
+        paths = opened.reserve(source.identity, ZONE)
+        opened.publish_fit(source.identity, FIT.read_bytes())
+        monkeypatch.setattr(files, "rename_new", late_file)
+        with pytest.raises(OutputConflict):
+            opened.publish_report(source.identity, markdown, ConversionOptions())
+
+        entry = opened.registry.entry(source.identity)
+        assert entry.tracked.conversion is ConversionState.PENDING
+        assert entry.report_sha256 is None
+        assert not opened.recover_report(entry)
+    assert (tmp_path / paths.report).read_bytes() == contents
+    assert not list(tmp_path.glob(".fit-to-md-*.tmp"))
+
+
 def test_interruption_after_fit_rename_leaves_evidence_not_acquired(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -467,7 +497,10 @@ with SqliteOutput(Path(sys.argv[1])).write(
         str(destination),
         str(ready),
     ]
-    with subprocess.Popen(command) as holder:
+    source_root = Path(__file__).resolve().parents[4] / "src"
+    with subprocess.Popen(
+        command, env={**environ, "PYTHONPATH": str(source_root)}
+    ) as holder:
         try:
             deadline = monotonic() + 10
             while (
@@ -527,6 +560,7 @@ def test_migration_backs_up_original_and_rolls_back_on_failure(
 ) -> None:
     from fit_to_md.infrastructure.synchronization import registry
 
+    version = registry._VERSION
     store = SqliteOutput(tmp_path)
     source = activity()
     with store.write(ACCOUNT, VAULT) as opened:
@@ -541,8 +575,8 @@ def test_migration_backs_up_original_and_rolls_back_on_failure(
         if interrupted:
             raise KeyboardInterrupt
 
-    monkeypatch.setattr(registry, "_VERSION", 2)
-    monkeypatch.setitem(registry._MIGRATIONS, 1, migrate)
+    monkeypatch.setattr(registry, "_VERSION", version + 1)
+    monkeypatch.setitem(registry._MIGRATIONS, version, migrate)
 
     before = {p.name: p.read_bytes() for p in database.parent.iterdir()}
     with pytest.raises(StorageFailure, match="writable migration"), store.read(ACCOUNT):
@@ -557,7 +591,7 @@ def test_migration_backs_up_original_and_rolls_back_on_failure(
             assert opened.registry.snapshot() == original
 
     with closing(sqlite3.connect(database)) as db:
-        expected = 1 if interrupted else 2
+        expected = version if interrupted else version + 1
         assert db.execute("SELECT version FROM schema_version").fetchone() == (
             expected,
         )
@@ -567,7 +601,7 @@ def test_migration_backs_up_original_and_rolls_back_on_failure(
     restored = tmp_path / "restored"
     (restored / METADATA).mkdir(parents=True)
     (restored / DATABASE).write_bytes(next(database.parent.glob("*.bak")).read_bytes())
-    monkeypatch.setattr(registry, "_VERSION", 1)
+    monkeypatch.setattr(registry, "_VERSION", version)
     with SqliteOutput(restored).read(ACCOUNT) as reader:
         assert reader is not None
         assert reader.snapshot() == original

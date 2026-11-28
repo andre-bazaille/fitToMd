@@ -39,8 +39,23 @@ from fit_to_md.domain.synchronization.model import (
 )
 from fit_to_md.infrastructure.synchronization.files import rename_new
 
-_VERSION = 1
-_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {}
+_VERSION = 2
+_REPORT_DIGEST_COLUMN = """report_sha256 TEXT CHECK (
+            report_sha256 IS NULL OR (
+                length(report_sha256) = 64
+                AND report_sha256 NOT GLOB '*[^0-9a-f]*'
+                AND report_path IS NOT NULL
+                AND conversion_options IS NOT NULL
+                AND conversion = 'pending'
+            )
+        )"""
+
+
+def _add_report_digest(connection: sqlite3.Connection) -> None:
+    connection.execute(f"ALTER TABLE activities ADD COLUMN {_REPORT_DIGEST_COLUMN}")
+
+
+_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {1: _add_report_digest}
 _SCHEMA = (
     """CREATE TABLE schema_version (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -58,7 +73,7 @@ _SCHEMA = (
         last_complete_discovery TEXT,
         CHECK ((reference_utc IS NULL) = (reference_zone IS NULL))
     ) STRICT""",
-    """CREATE TABLE activities (
+    f"""CREATE TABLE activities (
         remote_id TEXT NOT NULL,
         sport INTEGER NOT NULL,
         start_utc TEXT,
@@ -78,6 +93,7 @@ _SCHEMA = (
         conversion_count INTEGER NOT NULL DEFAULT 0 CHECK (conversion_count >= 0),
         conversion_at TEXT,
         conversion_error TEXT,
+        {_REPORT_DIGEST_COLUMN},
         PRIMARY KEY (remote_id, sport),
         CHECK ((fit_path IS NULL) = (report_path IS NULL)),
         CHECK ((fit_size IS NULL) = (fit_sha256 IS NULL)),
@@ -261,7 +277,7 @@ def _check_tables(connection: sqlite3.Connection) -> None:
                   conversion, fit_path, report_path, fit_size, fit_sha256,
                   conversion_options, acquisition_count, acquisition_at,
                   acquisition_error, conversion_count, conversion_at,
-                  conversion_error FROM activities LIMIT 0"""
+                  conversion_error, report_sha256 FROM activities LIMIT 0"""
     )
 
 
@@ -448,7 +464,7 @@ class SqliteRegistry:
             )
             self._update(
                 identity,
-                "conversion = ?, conversion_error = ?",
+                "conversion = ?, conversion_error = ?, report_sha256 = NULL",
                 (state, reason.value),
                 "acquisition = 'acquired' AND conversion <> 'conversion_unsupported'",
             )
@@ -459,7 +475,8 @@ class SqliteRegistry:
         self._update(
             identity,
             "conversion = 'pending', conversion_count = conversion_count + 1, "
-            "conversion_at = ?, conversion_options = ?, conversion_error = NULL",
+            "conversion_at = ?, conversion_options = ?, conversion_error = NULL, "
+            "report_sha256 = NULL",
             (_utc_text(at), json.dumps(asdict(options), allow_nan=False)),
             "acquisition = 'acquired' AND conversion <> 'conversion_unsupported'",
         )
@@ -504,9 +521,29 @@ class SqliteRegistry:
     ) -> None:
         self._update(
             identity,
-            "conversion = 'converted', conversion_options = ?, conversion_error = NULL",
+            "conversion = 'converted', conversion_options = ?, conversion_error = NULL, "
+            "report_sha256 = NULL",
             (json.dumps(asdict(options), allow_nan=False),),
             "acquisition = 'acquired' AND conversion <> 'conversion_unsupported'",
+        )
+
+    def record_report_publication(
+        self, identity: ActivityIdentity, digest: str, options: ConversionOptions
+    ) -> None:
+        self._update(
+            identity,
+            "conversion = 'pending', conversion_options = ?, conversion_error = NULL, "
+            "report_sha256 = ?",
+            (json.dumps(asdict(options), allow_nan=False), digest),
+            "acquisition = 'acquired' AND conversion <> 'conversion_unsupported'",
+        )
+
+    def discard_report_digest(self, identity: ActivityIdentity) -> None:
+        self._update(
+            identity,
+            "report_sha256 = NULL",
+            (),
+            "conversion = 'pending'",
         )
 
     def _update(
@@ -566,6 +603,7 @@ class SqliteRegistry:
             options,
             _read_attempts(row, Stage.ACQUISITION),
             _read_attempts(row, Stage.CONVERSION),
+            row["report_sha256"],
         )
 
 

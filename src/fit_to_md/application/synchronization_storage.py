@@ -6,6 +6,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from hashlib import sha256
 from math import isfinite
 from pathlib import Path, PurePosixPath
 from typing import Literal, Protocol
@@ -158,6 +159,7 @@ class RegistryEntry:
     conversion_options: ConversionOptions | None
     acquisition_attempts: Attempts
     conversion_attempts: Attempts
+    report_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -219,6 +221,12 @@ class Registry(RegistryReader, Protocol):
         self, identity: ActivityIdentity, options: ConversionOptions
     ) -> None: ...
 
+    def record_report_publication(
+        self, identity: ActivityIdentity, digest: str, options: ConversionOptions
+    ) -> None: ...
+
+    def discard_report_digest(self, identity: ActivityIdentity) -> None: ...
+
 
 class OutputLock(Protocol):
     def hold(self, *, read_only: bool = False) -> AbstractContextManager[None]: ...
@@ -238,6 +246,8 @@ class OutputFileReader(Protocol):
 
     def has_report(self, path: PurePosixPath) -> bool: ...
 
+    def matches_report_digest(self, path: PurePosixPath, digest: str) -> bool: ...
+
 
 class OutputFiles(OutputFileReader, Protocol):
     def local_fit(self, path: PurePosixPath) -> Path: ...
@@ -248,7 +258,7 @@ class OutputFiles(OutputFileReader, Protocol):
 
     def archive_damaged_fit(self, path: PurePosixPath) -> None: ...
 
-    def publish_report(self, path: PurePosixPath, markdown: str) -> None: ...
+    def publish_report(self, path: PurePosixPath, contents: bytes) -> None: ...
 
 
 def has_verified_fit(entry: RegistryEntry, files: OutputFileReader) -> bool:
@@ -264,6 +274,15 @@ def has_registered_report(entry: RegistryEntry, files: OutputFileReader) -> bool
         entry.tracked.conversion is ConversionState.CONVERTED
         and entry.paths is not None
         and files.has_report(entry.paths.report)
+    )
+
+
+def has_recoverable_report(entry: RegistryEntry, files: OutputFileReader) -> bool:
+    return (
+        entry.tracked.conversion is ConversionState.PENDING
+        and entry.paths is not None
+        and entry.report_sha256 is not None
+        and files.matches_report_digest(entry.paths.report, entry.report_sha256)
     )
 
 
@@ -328,6 +347,15 @@ class OutputStorage:
         self.files.archive_damaged_fit(paths.fit)
         self.registry.reset_acquisition(entry.tracked.activity.identity)
 
+    def recover_report(self, entry: RegistryEntry) -> bool:
+        if not has_recoverable_report(entry, self.files):
+            return False
+        options = entry.conversion_options
+        if options is None:
+            raise StorageFailure("Missing COROS options for the staged report.")
+        self.registry.record_converted(entry.tracked.activity.identity, options)
+        return True
+
     def publish_report(
         self, identity: ActivityIdentity, markdown: str, options: ConversionOptions
     ) -> None:
@@ -337,7 +365,19 @@ class OutputStorage:
         if entry.tracked.acquisition is not AcquisitionState.ACQUIRED:
             raise StorageFailure("Acquire the COROS FIT before publishing its report.")
         paths = self._reserved_paths(entry)
-        self.files.publish_report(paths.report, markdown)
+        self.files.require_available(paths.report)
+        try:
+            contents = markdown.encode("utf-8")
+        except UnicodeError:
+            raise StorageFailure("Could not write the COROS report.") from None
+        self.registry.record_report_publication(
+            identity, sha256(contents).hexdigest(), options
+        )
+        try:
+            self.files.publish_report(paths.report, contents)
+        except OutputConflict:
+            self.registry.discard_report_digest(identity)
+            raise
         self.registry.record_converted(identity, options)
 
     @staticmethod

@@ -11,7 +11,9 @@ from fit_to_md.application.synchronization_storage import (
     FilePaths,
     OutputConflict,
     OutputFileReader,
+    RegistryEntry,
     RegistrySnapshot,
+    has_recoverable_report,
     has_registered_report,
     has_verified_fit,
 )
@@ -228,10 +230,8 @@ def preview_synchronization(
             state = replace(state, conversion=ConversionState.PENDING)
         tracked.append(state)
     plan = plan_synchronization(execution, account, discovery.catalog, tracked)
-    paths = {
-        row.tracked.activity.identity: row.paths
-        for row in registry
-        if row.paths is not None
+    reserved = {
+        row.tracked.activity.identity: row for row in registry if row.paths is not None
     }
     entries = [PreviewEntry(activity, PreviewAction.KNOWN) for activity in plan.known]
     for action, work in (
@@ -239,7 +239,10 @@ def preview_synchronization(
         (PreviewAction.RESUME, plan.resumes),
     ):
         for item in work:
-            if item.activity.start_at is None and item.activity.identity not in paths:
+            if (
+                item.activity.start_at is None
+                and item.activity.identity not in reserved
+            ):
                 unclassifiable.add(item.activity.identity)
                 continue
             entries.append(
@@ -252,7 +255,7 @@ def preview_synchronization(
             )
     entries.sort(key=lambda row: activity_order(row.activity))
     conflicts = _find_conflicts(
-        entries, paths, execution.period.zone, destinations, repairable
+        entries, reserved, execution.period.zone, destinations, repairable
     )
     return SynchronizationPreview(
         plan.complete,
@@ -267,18 +270,19 @@ def preview_synchronization(
 
 def _find_conflicts(
     entries: list[PreviewEntry],
-    reserved: dict[ActivityIdentity, FilePaths],
+    reserved: dict[ActivityIdentity, RegistryEntry],
     zone: ZoneInfo,
     destinations: OutputFileReader,
     repairable: set[ActivityIdentity],
 ) -> dict[ActivityIdentity, tuple[PurePosixPath, ...]]:
-    owners = {paths: identity for identity, paths in reserved.items()}
+    owners = {row.paths: identity for identity, row in reserved.items()}
     conflicts: dict[ActivityIdentity, tuple[PurePosixPath, ...]] = {}
     for entry in entries:
         if not (entry.acquire or entry.convert):
             continue
         identity = entry.activity.identity
-        paths = reserved.get(identity)
+        row = reserved.get(identity)
+        paths = row.paths if row is not None else None
         if paths is None:
             assert entry.activity.start_at is not None
             paths = FilePaths.for_start(entry.activity.start_at, zone)
@@ -294,7 +298,9 @@ def _find_conflicts(
                     conflicts[identity] = (paths.fit,)
                     continue
             owners[paths] = identity
-        if entry.convert:
+        if entry.convert and not (
+            row is not None and has_recoverable_report(row, destinations)
+        ):
             try:
                 destinations.require_available(paths.report)
             except OutputConflict:

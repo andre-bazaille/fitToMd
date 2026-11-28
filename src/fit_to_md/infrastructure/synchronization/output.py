@@ -108,6 +108,9 @@ class SqliteOutput:
     def has_report(self, path: PurePosixPath) -> bool:
         return LocalOutputFiles(self._output).has_report(path)
 
+    def matches_report_digest(self, path: PurePosixPath, digest: str) -> bool:
+        return LocalOutputFiles(self._output).matches_report_digest(path, digest)
+
     def inspect_for_write(
         self, account: AccountIdentity
     ) -> tuple[bool, Reference | None]:

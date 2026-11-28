@@ -155,6 +155,17 @@ class LocalOutputFiles:
         except OSError:
             raise StorageFailure("Could not inspect the COROS report.") from None
 
+    def matches_report_digest(self, path: PurePosixPath, digest: str) -> bool:
+        if not self.has_report(path):
+            return False
+        try:
+            with self._destination(path).open("rb") as stream:
+                return hashlib.file_digest(stream, "sha256").hexdigest() == digest
+        except FileNotFoundError:
+            return False
+        except OSError:
+            raise StorageFailure("Could not verify the COROS report.") from None
+
     def require_available(self, path: PurePosixPath) -> None:
         try:
             destination = self._destination(path)
@@ -212,13 +223,13 @@ class LocalOutputFiles:
         except (OSError, OutputConflict):
             raise StorageFailure("Could not archive the damaged COROS FIT.") from None
 
-    def publish_report(self, path: PurePosixPath, markdown: str) -> None:
+    def publish_report(self, path: PurePosixPath, contents: bytes) -> None:
         try:
             destination = self._destination(path)
             self.require_available(path)
-            with _stage(destination, markdown.encode("utf-8")) as temporary:
+            with _stage(destination, contents) as temporary:
                 rename_new(temporary, destination)
-        except (OSError, UnicodeError):
+        except OSError:
             raise StorageFailure("Could not write the COROS report.") from None
 
     def _destination(self, path: PurePosixPath) -> Path:

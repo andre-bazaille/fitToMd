@@ -3,6 +3,9 @@
 - Made batch Markdown publication atomic. If another writer creates the
   destination during generation, the batch skips the report and preserves the
   existing contents.
+- COROS sync now recovers Markdown reports published just before an
+  interruption. It verifies the saved SHA-256 digest, preserves conflicting
+  files, and migrates existing output registries with a backup.
 
 ## 2026-11-26
 
