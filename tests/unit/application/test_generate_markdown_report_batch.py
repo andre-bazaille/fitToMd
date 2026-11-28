@@ -20,6 +20,7 @@ from fit_to_md.domain.activity import Activity, ActivitySession
 from fit_to_md.domain.activity.ports import InvalidActivityError
 from fit_to_md.domain.reporting.entities import FitReport, SessionSummary
 from fit_to_md.domain.reporting.ports import ProviderDiagnosticKind
+from fit_to_md.infrastructure.markdown.writer import LocalMarkdownReportWriter
 from fit_to_md.infrastructure.weather.open_meteo import (
     OpenMeteoHistoricalWeatherProvider,
 )
@@ -81,11 +82,14 @@ class StubWriter:
     def is_file(self, path: Path) -> bool:
         return path in self.existing
 
-    def write(self, path: Path, markdown: str) -> None:
+    def publish_if_absent(self, path: Path, markdown: str) -> bool:
         self.events.append(f"write:{path.name}")
+        if path in self.existing or path in self.contents:
+            return False
         if path in self.write_errors:
             raise self.write_errors[path]
         self.contents[path] = markdown
+        return True
 
 
 class FakeResponse:
@@ -207,6 +211,42 @@ def test_batch_writes_source_name_output_to_selected_directory(
     assert [outcome.status for outcome in outcomes] == [BatchReportStatus.SUCCESS]
     assert outcomes[0].output == expected_output
     assert writer.contents == {expected_output: "# report"}
+
+
+@pytest.mark.parametrize(
+    ("naming", "output_name"),
+    (
+        (BatchOutputNaming.SOURCE_NAME, "activity.md"),
+        (BatchOutputNaming.ACTIVITY_TIME, "2026-09-17 07-05.md"),
+    ),
+)
+def test_batch_preserves_report_created_during_generation(
+    tmp_path: Path, naming: BatchOutputNaming, output_name: str
+) -> None:
+    source = tmp_path / "activity.fit"
+    output = tmp_path / output_name
+    existing_contents = "# Rapport créé par un autre processus\n".encode()
+
+    class ConcurrentReportGenerator(StubGenerator):
+        def execute_detailed(self, source: Path) -> GeneratedMarkdownReport:
+            generated = super().execute_detailed(source)
+            with output.open("xb") as stream:
+                stream.write(existing_contents)
+            return generated
+
+    generator = ConcurrentReportGenerator([])
+    generator.start_times[source] = datetime(2026, 9, 17, 7, 5)
+    generator.markdown[source] = "# Newly generated report\n"
+
+    (outcome,) = GenerateMarkdownReportBatch(
+        generator, LocalMarkdownReportWriter()
+    ).execute([source], naming)
+
+    assert outcome.status is BatchReportStatus.SKIPPED_EXISTING
+    assert outcome.output == output
+    assert outcome.generated is None
+    assert output.read_bytes() == existing_contents
+    assert set(tmp_path.iterdir()) == {output}
 
 
 def test_source_name_batch_continues_after_processing_and_write_failures(

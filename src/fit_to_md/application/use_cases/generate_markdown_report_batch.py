@@ -115,7 +115,9 @@ class GenerateMarkdownReportBatch:
                 continue
 
             try:
-                self._writer.write(plan.output, generated.markdown)
+                published = self._writer.publish_if_absent(
+                    plan.output, generated.markdown
+                )
             except OSError as error:
                 yield BatchReportOutcome(
                     source=plan.source,
@@ -123,6 +125,14 @@ class GenerateMarkdownReportBatch:
                     status=BatchReportStatus.WRITE_FAILED,
                     generated=generated,
                     error=error,
+                )
+                continue
+
+            if not published:
+                yield BatchReportOutcome(
+                    source=plan.source,
+                    output=plan.output,
+                    status=BatchReportStatus.SKIPPED_EXISTING,
                 )
                 continue
 

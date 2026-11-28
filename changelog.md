@@ -1,3 +1,9 @@
+## 2026-11-28
+
+- Made batch Markdown publication atomic. If another writer creates the
+  destination during generation, the batch skips the report and preserves the
+  existing contents.
+
 ## 2026-11-26
 
 - Fixed Windows COROS login for sessions larger than one Credential Manager
